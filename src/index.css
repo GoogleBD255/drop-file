@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@layer utilities {
+  @keyframes scan {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(100%); }
+  }
+}
+
+@theme {
+  --animate-scan: scan 2s linear infinite;
+}
