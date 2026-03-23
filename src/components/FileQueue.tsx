@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ProgressBar } from './ProgressBar';
-import { CheckCircle, AlertCircle, Clock, XCircle, RefreshCw, PauseCircle, PlayCircle } from 'lucide-react';
+import { CheckCircle, AlertCircle, Clock, XCircle, RefreshCw, PauseCircle, PlayCircle, FileText, File as FileIcon, Film, Image as ImageIcon } from 'lucide-react';
 
 export interface FileQueueItem {
   id: number;
@@ -40,10 +40,11 @@ function formatSpeed(bytesPerSec: number) {
 
 function Thumbnail({ file, url, type, name }: { file?: File, url?: string, type?: string, name: string }) {
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+  const isImage = type?.startsWith('image/') || name.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+  const isVideo = type?.startsWith('video/') || name.match(/\.(mp4|webm|ogg|mov)$/i);
 
   React.useEffect(() => {
-    const isImage = type?.startsWith('image/') || name.match(/\.(jpg|jpeg|png|gif|webp)$/i);
-    if (!isImage) return;
+    if (!isImage && !isVideo) return;
 
     if (url) {
       setPreviewUrl(url);
@@ -55,16 +56,48 @@ function Thumbnail({ file, url, type, name }: { file?: File, url?: string, type?
       setPreviewUrl(objectUrl);
       return () => URL.revokeObjectURL(objectUrl);
     }
-  }, [file, url, type, name]);
+  }, [file, url, type, name, isImage, isVideo]);
 
-  if (!previewUrl) return null;
+  if (!previewUrl) {
+    const isAudio = type?.startsWith('audio/') || name.match(/\.(mp3|wav|ogg|m4a)$/i);
+    const isPdf = type === 'application/pdf' || name.endsWith('.pdf');
+    
+    return (
+      <div className="w-10 h-10 bg-gray-100 dark:bg-gray-800 rounded-md flex items-center justify-center flex-shrink-0 border border-gray-200 dark:border-gray-700">
+        {isImage && <ImageIcon className="w-5 h-5 text-blue-500" />}
+        {isVideo && <Film className="w-5 h-5 text-purple-500" />}
+        {isAudio && <PlayCircle className="w-5 h-5 text-pink-500" />}
+        {isPdf && <FileText className="w-5 h-5 text-red-500" />}
+        {!isImage && !isVideo && !isAudio && !isPdf && <FileIcon className="w-5 h-5 text-gray-400" />}
+      </div>
+    );
+  }
 
   return (
-    <img 
-      src={previewUrl} 
-      alt={name} 
-      className="w-10 h-10 object-cover rounded-md flex-shrink-0 border border-gray-200 dark:border-gray-700" 
-    />
+    <div className="relative w-10 h-10 flex-shrink-0 group cursor-pointer" onClick={() => window.open(previewUrl, '_blank')}>
+      {isImage ? (
+        <img 
+          src={previewUrl} 
+          alt={name} 
+          className="w-full h-full object-cover rounded-md border border-gray-200 dark:border-gray-700 group-hover:opacity-90 transition-opacity" 
+        />
+      ) : isVideo ? (
+        <div className="relative w-full h-full rounded-md overflow-hidden border border-gray-200 dark:border-gray-700 bg-black group-hover:opacity-90 transition-opacity">
+          <video 
+            src={previewUrl} 
+            className="w-full h-full object-cover"
+            muted
+            playsInline
+            preload="metadata"
+          />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+            <div className="w-4 h-4 bg-white/80 rounded-full flex items-center justify-center">
+              <div className="w-0 h-0 border-t-[3px] border-t-transparent border-l-[5px] border-l-blue-600 border-b-[3px] border-b-transparent ml-0.5" />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
