@@ -8,7 +8,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
-import { Send as SendIcon, Download, Smartphone, Zap } from 'lucide-react';
+import { Send as SendIcon, Download, Smartphone, Zap, RefreshCw } from 'lucide-react';
 
 function Home() {
   return (
@@ -42,6 +42,21 @@ function Home() {
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Receive Files</h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm">Scan a QR code to receive files from another device</p>
         </Link>
+      </div>
+      <div className="mt-16 pt-8 border-t border-gray-100 dark:border-gray-800">
+        <button 
+          onClick={() => {
+            if (confirm('This will reset all app settings and reload the page. Continue?')) {
+              localStorage.clear();
+              sessionStorage.clear();
+              window.location.href = window.location.origin;
+            }
+          }}
+          className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors flex items-center space-x-2 mx-auto"
+        >
+          <RefreshCw className="w-3 h-3" />
+          <span>Reset Application</span>
+        </button>
       </div>
     </div>
   );

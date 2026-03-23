@@ -218,7 +218,10 @@ export function Send() {
               <h3 className="text-sm font-medium text-red-900 dark:text-red-100 mb-1">Connection Error</h3>
               <p className="text-red-700 dark:text-red-300 text-xs mb-4">The peer connection was lost or failed.</p>
               <button
-                onClick={() => window.location.reload()}
+                onClick={() => {
+                  window.location.hash = '';
+                  window.location.reload();
+                }}
                 className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-red-500/20 flex items-center space-x-2 mx-auto"
               >
                 <RefreshCw className="w-4 h-4" />

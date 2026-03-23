@@ -333,12 +333,15 @@ export function Receive() {
                             </div>
                             <div className="space-y-2">
                               <p className="text-white font-bold text-lg">Permission Blocked</p>
-                              <p className="text-white/60 text-sm max-w-[240px] mx-auto">
+                              <p className="text-white/60 text-xs max-w-[280px] mx-auto leading-relaxed">
                                 Please check your camera permission and try again.
                               </p>
                             </div>
                             <button
-                              onClick={() => window.location.reload()}
+                              onClick={() => {
+                                window.location.hash = '';
+                                window.location.reload();
+                              }}
                               className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-base font-bold transition-all shadow-lg shadow-blue-500/30 flex items-center space-x-2 mx-auto"
                             >
                               <RefreshCw className="w-5 h-5" />
@@ -498,7 +501,10 @@ export function Receive() {
             <h2 className="text-xl font-medium text-red-900 dark:text-red-100 mb-2">Connection Lost</h2>
             <p className="text-red-700 dark:text-red-300 mb-6">The connection to the sender was lost.</p>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                window.location.hash = '';
+                window.location.reload();
+              }}
               className="px-6 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-full transition-colors"
             >
               Try Again
