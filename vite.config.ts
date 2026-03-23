@@ -14,10 +14,10 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
         manifest: {
-          name: 'QuickShare - File Transfer',
-          short_name: 'QuickShare',
-          description: 'Fast, secure, and easy file sharing using WebRTC and QR codes.',
-          theme_color: '#3b82f6',
+          name: 'Fast Share - File Transfer',
+          short_name: 'Fast Share',
+          description: 'Fast, secure, and easy peer-to-peer file sharing directly in your browser.',
+          theme_color: '#2563eb',
           icons: [
             {
               src: 'pwa-192x192.png',

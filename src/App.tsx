@@ -8,13 +8,13 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
-import { Send as SendIcon, Download, Smartphone } from 'lucide-react';
+import { Send as SendIcon, Download, Smartphone, Zap } from 'lucide-react';
 
 function Home() {
   return (
     <div className="max-w-4xl mx-auto p-6 text-center pt-20">
       <h1 className="text-5xl font-bold text-gray-900 dark:text-white tracking-tight mb-6">
-        Drop <span className="text-blue-600">Web</span>
+        Fast <span className="text-blue-600">Share</span>
       </h1>
       <p className="text-xl text-gray-500 dark:text-gray-400 mb-12 max-w-2xl mx-auto">
         Lightning-fast, secure, peer-to-peer file transfer directly in your browser. No limits, no servers, no hassle.
@@ -88,9 +88,9 @@ export default function App() {
             <div className="flex justify-between h-16 items-center">
               <Link to="/" className="flex items-center space-x-2">
                 <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                  <SendIcon className="w-5 h-5 text-white" />
+                  <Zap className="w-5 h-5 text-white fill-current" />
                 </div>
-                <span className="font-bold text-xl tracking-tight">Drop Web</span>
+                <span className="font-bold text-xl tracking-tight">Fast Share</span>
               </Link>
 
               {showInstallBtn && (
