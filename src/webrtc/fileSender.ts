@@ -1,7 +1,10 @@
+import { encryptChunk, encryptText } from '../lib/crypto';
+
 export class FileSender {
   private channel: RTCDataChannel;
   private file: File;
   public fileId: number;
+  private encryptionKey?: string;
   private chunkSize = 64 * 1024; // 64KB
   private offset = 0;
   private fileReader = new FileReader();
@@ -18,10 +21,11 @@ export class FileSender {
   private lastReportTime = 0;
   private lastReportOffset = 0;
 
-  constructor(channel: RTCDataChannel, file: File, fileId: number) {
+  constructor(channel: RTCDataChannel, file: File, fileId: number, encryptionKey?: string) {
     this.channel = channel;
     this.file = file;
     this.fileId = fileId;
+    this.encryptionKey = encryptionKey;
 
     this.fileReader.onerror = () => {
       if (!this.isCancelled) {
@@ -51,7 +55,16 @@ export class FileSender {
     };
   }
 
-  public start() {
+  private async sendMessage(message: any) {
+    if (this.encryptionKey) {
+      const encrypted = await encryptText(JSON.stringify(message), this.encryptionKey);
+      this.channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+    } else {
+      this.channel.send(JSON.stringify(message));
+    }
+  }
+
+  public async start() {
     this.channel.bufferedAmountLowThreshold = 128 * 1024; // 128KB
     
     // Send metadata first
@@ -63,7 +76,7 @@ export class FileSender {
       fileType: this.file.type
     };
     
-    this.channel.send(JSON.stringify(metadata));
+    await this.sendMessage(metadata);
     
     this.startTime = Date.now();
     this.lastReportTime = this.startTime;
@@ -76,16 +89,12 @@ export class FileSender {
 
   public pause() {
     this.isPaused = true;
-    try {
-      this.channel.send(JSON.stringify({ type: "pause", fileId: this.fileId }));
-    } catch (e) {}
+    this.sendMessage({ type: "pause", fileId: this.fileId }).catch(() => {});
   }
 
   public resume() {
     this.isPaused = false;
-    try {
-      this.channel.send(JSON.stringify({ type: "resume", fileId: this.fileId }));
-    } catch (e) {}
+    this.sendMessage({ type: "resume", fileId: this.fileId }).catch(() => {});
     
     if (!this.isReading && !this.isWaitingForBuffer) {
       this.readNextChunk();
@@ -95,20 +104,23 @@ export class FileSender {
   public cancel() {
     this.isCancelled = true;
     this.fileReader.abort();
-    try {
-      this.channel.send(JSON.stringify({ type: "cancel", fileId: this.fileId }));
-    } catch (e) {}
+    this.sendMessage({ type: "cancel", fileId: this.fileId }).catch(() => {});
   }
 
-  private sendBuffer(buffer: ArrayBuffer) {
+  private async sendBuffer(buffer: ArrayBuffer) {
     if (this.isCancelled) return;
     try {
+      let dataToSend = buffer;
+      if (this.encryptionKey) {
+        dataToSend = await encryptChunk(buffer, this.encryptionKey);
+      }
+
       const header = new ArrayBuffer(4);
       new DataView(header).setUint32(0, this.fileId);
       
-      const combined = new Uint8Array(4 + buffer.byteLength);
+      const combined = new Uint8Array(4 + dataToSend.byteLength);
       combined.set(new Uint8Array(header), 0);
-      combined.set(new Uint8Array(buffer), 4);
+      combined.set(new Uint8Array(dataToSend), 4);
       
       this.channel.send(combined.buffer);
       this.offset += buffer.byteLength;
@@ -120,7 +132,7 @@ export class FileSender {
           this.readNextChunk();
         }
       } else {
-        this.channel.send(JSON.stringify({ type: "complete", fileId: this.fileId }));
+        await this.sendMessage({ type: "complete", fileId: this.fileId });
         this.onComplete?.();
       }
     } catch (err) {

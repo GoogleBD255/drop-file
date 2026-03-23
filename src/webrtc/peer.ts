@@ -11,6 +11,7 @@ export class PeerConnection {
   public onDataChannel?: (channel: RTCDataChannel) => void;
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   public onPeerLeft?: () => void;
+  public sendMessage?: (message: any) => Promise<void>;
 
   constructor(roomId: string, isInitiator: boolean) {
     this.roomId = roomId;

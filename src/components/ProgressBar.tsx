@@ -16,7 +16,7 @@ export function ProgressBar({ progress, speed }: ProgressBarProps) {
 
   return (
     <div className="w-full mt-2">
-      {speed !== undefined && speed > 0 && (
+      {speed !== undefined && (
         <div className="flex justify-end mb-1">
           <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
             {formatSpeed(speed)}

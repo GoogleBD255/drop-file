@@ -145,7 +145,7 @@ export function FileQueue({ files, onCancel, onRetry, onPause, onResume }: FileQ
                     </span>
                     <span className="text-xs text-gray-500 flex items-center space-x-2">
                       <span>{(file.size / (1024 * 1024)).toFixed(2)} MB</span>
-                      {file.status === 'transferring' && file.speed > 0 && (
+                      {file.status === 'transferring' && (
                         <>
                           <span>•</span>
                           <span>{formatSpeed(file.speed)}</span>

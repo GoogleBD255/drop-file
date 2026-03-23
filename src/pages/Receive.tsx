@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { PeerConnection } from '../webrtc/peer';
 import { FileReceiver } from '../webrtc/fileReceiver';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
 import { Download, AlertCircle, Camera, Image as ImageIcon, Upload, Link as LinkIcon, RefreshCw } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'react-hot-toast';
+import { decryptText, encryptText } from '../lib/crypto';
 
 export function Receive() {
   const { roomId } = useParams<{ roomId: string }>();
+  const location = useLocation();
+  const encryptionKey = location.hash.replace('#', '');
   const navigate = useNavigate();
   
   const [peerConnected, setPeerConnected] = useState(false);
@@ -49,12 +52,29 @@ export function Receive() {
     };
 
     peer.onDataChannel = (channel) => {
-      channel.onmessage = (event) => {
+      const sendMessage = async (message: any) => {
+        if (encryptionKey) {
+          const encrypted = await encryptText(JSON.stringify(message), encryptionKey);
+          channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+        } else {
+          channel.send(JSON.stringify(message));
+        }
+      };
+
+      peerRef.current!.sendMessage = sendMessage;
+
+      channel.onmessage = async (event) => {
         if (typeof event.data === 'string') {
           try {
-            const data = JSON.parse(event.data);
+            let data = JSON.parse(event.data);
+            
+            if (data.type === 'encrypted' && encryptionKey) {
+              const decrypted = await decryptText(data.payload, encryptionKey);
+              data = JSON.parse(decrypted);
+            }
+
             if (data.type === 'metadata') {
-              const receiver = new FileReceiver(data);
+              const receiver = new FileReceiver(data, encryptionKey);
               
               receiver.onProgress = (p, s) => {
                 setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, progress: p, speed: s } : f));
@@ -74,6 +94,13 @@ export function Receive() {
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
+              };
+
+              receiver.onError = (err) => {
+                console.error(err);
+                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'error' } : f));
+                receiversRef.current.delete(data.fileId);
+                toast.error(`Error receiving file: ${data.name}. ${err}`);
               };
 
               receiversRef.current.set(data.fileId, receiver);
@@ -123,7 +150,7 @@ export function Receive() {
         return prev;
       });
     };
-  }, [roomId]);
+  }, [roomId, encryptionKey]);
 
   const handleScanSuccess = (text: string) => {
     try {
@@ -132,7 +159,7 @@ export function Receive() {
       const id = parts[parts.length - 1];
       if (id) {
         toast.success('QR Code scanned successfully!');
-        navigate(`/receive/${id}`);
+        navigate(`/receive/${id}${url.hash}`);
       } else {
         toast.error('Invalid QR code format.');
       }
@@ -170,14 +197,16 @@ export function Receive() {
     
     try {
       let id = manualLink.trim();
+      let hash = '';
       if (manualLink.includes('/')) {
         const url = new URL(manualLink.startsWith('http') ? manualLink : `https://${manualLink}`);
         const parts = url.pathname.split('/');
         id = parts[parts.length - 1];
+        hash = url.hash;
       }
       
       if (id) {
-        navigate(`/receive/${id}`);
+        navigate(`/receive/${id}${hash}`);
       } else {
         toast.error('Invalid link format.');
       }
@@ -254,6 +283,26 @@ export function Receive() {
     if (cameras.length > 1) {
       setCurrentCameraIndex((prev) => (prev + 1) % cameras.length);
     }
+  };
+
+  const handleCancel = (id: number) => {
+    const receiver = receiversRef.current.get(id);
+    if (receiver) {
+      receiver.cancel();
+      receiversRef.current.delete(id);
+    }
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'cancelled' } : f));
+    peerRef.current?.sendMessage?.({ type: 'cancel', fileId: id });
+  };
+
+  const handlePause = (id: number) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'paused', speed: 0 } : f));
+    peerRef.current?.sendMessage?.({ type: 'pause', fileId: id });
+  };
+
+  const handleResume = (id: number) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'transferring' } : f));
+    peerRef.current?.sendMessage?.({ type: 'resume', fileId: id });
   };
 
   return (
@@ -366,7 +415,7 @@ export function Receive() {
                   }`}
                 >
                   <ImageIcon className="w-5 h-5" />
-                  <span>Uploade</span>
+                  <span>Upload</span>
                 </button>
               </div>
 
@@ -433,7 +482,12 @@ export function Receive() {
                 <p className="text-gray-500 dark:text-gray-400 mt-2">Waiting for sender to select files...</p>
               </div>
             ) : (
-              <FileQueue files={files} />
+              <FileQueue 
+                files={files} 
+                onCancel={handleCancel}
+                onPause={handlePause}
+                onResume={handleResume}
+              />
             )}
           </div>
         )}

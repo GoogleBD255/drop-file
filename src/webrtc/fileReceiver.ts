@@ -1,9 +1,13 @@
+import { decryptChunk } from '../lib/crypto';
+
 export class FileReceiver {
   private receivedSize = 0;
   public metadata: any;
+  private encryptionKey?: string;
   
   public onProgress?: (progress: number, speed: number) => void;
   public onComplete?: (file: File) => void;
+  public onError?: (error: string) => void;
 
   private startTime = 0;
   private lastReportTime = 0;
@@ -20,8 +24,9 @@ export class FileReceiver {
   private isCancelled = false;
   private isInitializing = true;
 
-  constructor(metadata: any) {
+  constructor(metadata: any, encryptionKey?: string) {
     this.metadata = metadata;
+    this.encryptionKey = encryptionKey;
     this.startTime = Date.now();
     this.lastReportTime = this.startTime;
     this.initStorage();
@@ -54,21 +59,34 @@ export class FileReceiver {
     }
   }
 
-  public receiveChunk(chunk: ArrayBuffer) {
+  public async receiveChunk(chunk: ArrayBuffer) {
     if (this.isCancelled) return;
-    this.receivedSize += chunk.byteLength;
+    
+    let dataToProcess = chunk;
+    if (this.encryptionKey) {
+      try {
+        dataToProcess = await decryptChunk(chunk, this.encryptionKey);
+      } catch (e) {
+        console.error("Decryption error", e);
+        this.onError?.("Decryption failed. The encryption key might be incorrect.");
+        this.cancel();
+        return;
+      }
+    }
+
+    this.receivedSize += dataToProcess.byteLength;
     this.reportProgress();
 
     if (this.isInitializing) {
-      this.writeQueue.push(chunk);
+      this.writeQueue.push(dataToProcess);
       return;
     }
 
     if (this.useOPFS) {
-      this.writeQueue.push(chunk);
+      this.writeQueue.push(dataToProcess);
       this.processWriteQueue();
     } else {
-      this.fallbackBuffers.push(chunk);
+      this.fallbackBuffers.push(dataToProcess);
     }
   }
 

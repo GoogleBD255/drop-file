@@ -8,8 +8,11 @@ import { FileSender } from '../webrtc/fileSender';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
+import { generateEncryptionKey, decryptText, encryptText } from '../lib/crypto';
+
 export function Send() {
   const [roomId, setRoomId] = useState<string>('');
+  const [encryptionKey, setEncryptionKey] = useState<string>('');
   const [peerConnected, setPeerConnected] = useState(false);
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'waiting' | 'connected' | 'error'>('waiting');
@@ -20,7 +23,9 @@ export function Send() {
 
   useEffect(() => {
     const newRoomId = uuidv4().slice(0, 8);
+    const newKey = generateEncryptionKey();
     setRoomId(newRoomId);
+    setEncryptionKey(newKey);
 
     const peer = new PeerConnection(newRoomId, true);
     peerRef.current = peer;
@@ -33,10 +38,27 @@ export function Send() {
         
         // Setup message listener for the data channel
         if (peer.dataChannel) {
-          peer.dataChannel.onmessage = (event) => {
+          const sendMessage = async (message: any) => {
+            if (newKey) {
+              const encrypted = await encryptText(JSON.stringify(message), newKey);
+              peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+            } else {
+              peer.dataChannel!.send(JSON.stringify(message));
+            }
+          };
+
+          peer.sendMessage = sendMessage;
+
+          peer.dataChannel.onmessage = async (event) => {
             if (typeof event.data === 'string') {
               try {
-                const data = JSON.parse(event.data);
+                let data = JSON.parse(event.data);
+                
+                if (data.type === 'encrypted' && newKey) {
+                  const decrypted = await decryptText(data.payload, newKey);
+                  data = JSON.parse(decrypted);
+                }
+
                 if (data.type === 'cancel') {
                   const sender = sendersRef.current.get(data.fileId);
                   if (sender) {
@@ -95,7 +117,7 @@ export function Send() {
   };
 
   const startTransfer = (fileToSend: File, fileId: number, channel: RTCDataChannel) => {
-    const sender = new FileSender(channel, fileToSend, fileId);
+    const sender = new FileSender(channel, fileToSend, fileId, encryptionKey);
     sendersRef.current.set(fileId, sender);
 
     sender.onProgress = (p, s) => {
@@ -163,7 +185,7 @@ export function Send() {
     }
   }, [peerConnected, status]);
 
-  const receiveUrl = `${window.location.origin}/receive/${roomId}`;
+  const receiveUrl = `${window.location.origin}/receive/${roomId}${encryptionKey ? '#' + encryptionKey : ''}`;
 
   return (
     <div className="max-w-4xl mx-auto p-6">
