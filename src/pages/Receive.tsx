@@ -216,11 +216,6 @@ export function Receive() {
         cameraConfig,
         { 
           fps: 10, 
-          qrbox: (viewfinderWidth, viewfinderHeight) => {
-            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-            const qrboxSize = Math.floor(minEdge * 0.7);
-            return { width: qrboxSize, height: qrboxSize };
-          }
         },
         (decodedText) => {
           if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
@@ -323,7 +318,6 @@ export function Receive() {
                   {cameraStarted && (
                     <>
                       <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
-                        <div className="w-64 h-64 border-2 border-blue-500 rounded-3xl opacity-50 animate-pulse"></div>
                         <div className="absolute top-0 left-0 w-full h-1 bg-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.5)] animate-scan"></div>
                       </div>
                       

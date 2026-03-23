@@ -10,3 +10,11 @@
 @theme {
   --animate-scan: scan 2s linear infinite;
 }
+
+#reader__scan_region {
+  border: none !important;
+}
+
+#reader__scan_region video {
+  border-radius: 1.5rem;
+}
