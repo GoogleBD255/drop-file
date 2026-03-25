@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { PeerConnection } from '../webrtc/peer';
 import { FileReceiver } from '../webrtc/fileReceiver';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
-import { Download, AlertCircle, Camera, Image as ImageIcon, Upload, Link as LinkIcon, RefreshCw, KeyRound } from 'lucide-react';
+import { Download, AlertCircle, Camera, Image as ImageIcon, Upload, Link as LinkIcon, RefreshCw, KeyRound, Lock } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'react-hot-toast';
 import { decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
@@ -385,7 +385,11 @@ export function Receive() {
     <div className="max-w-2xl mx-auto p-6">
       <div className="text-center mb-10">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Receive Files</h1>
-        <p className="text-gray-500 dark:text-gray-400">Secure peer-to-peer file transfer</p>
+        <p className="text-gray-500 dark:text-gray-400 mb-4">Secure peer-to-peer file transfer</p>
+        <div className="inline-flex items-center space-x-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 px-3 py-1 rounded-full text-xs font-medium border border-green-200 dark:border-green-800/30">
+          <Lock className="w-3.5 h-3.5" />
+          <span>End-to-End Encrypted</span>
+        </div>
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-8">

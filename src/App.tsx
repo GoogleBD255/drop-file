@@ -9,7 +9,7 @@ import { Toaster } from 'react-hot-toast';
 import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
 import { History } from './pages/History';
-import { Send as SendIcon, Download, Smartphone, Zap, RefreshCw, Clock } from 'lucide-react';
+import { Send as SendIcon, Download, Smartphone, Zap, RefreshCw, Clock, Lock } from 'lucide-react';
 
 function Home() {
   return (
@@ -17,9 +17,15 @@ function Home() {
       <h1 className="text-5xl font-bold text-gray-900 dark:text-white tracking-tight mb-6">
         Fast <span className="text-blue-600">Share</span>
       </h1>
-      <p className="text-xl text-gray-500 dark:text-gray-400 mb-12 max-w-2xl mx-auto">
+      <p className="text-xl text-gray-500 dark:text-gray-400 mb-6 max-w-2xl mx-auto">
         Lightning-fast, secure, peer-to-peer file transfer directly in your browser. No limits, no servers, no hassle.
       </p>
+      <div className="flex justify-center mb-12">
+        <div className="inline-flex items-center space-x-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 px-4 py-1.5 rounded-full text-sm font-medium border border-green-200 dark:border-green-800/30">
+          <Lock className="w-4 h-4" />
+          <span>100% End-to-End Encrypted</span>
+        </div>
+      </div>
       
       <div className="grid sm:grid-cols-2 gap-6 max-w-2xl mx-auto">
         <Link 

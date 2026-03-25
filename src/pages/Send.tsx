@@ -5,7 +5,7 @@ import { FileDrop } from '../components/FileDrop';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
 import { PeerConnection } from '../webrtc/peer';
 import { FileSender } from '../webrtc/fileSender';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, RefreshCw, Lock } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 import { generateEncryptionKey, decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
@@ -223,7 +223,11 @@ export function Send() {
     <div className="max-w-4xl mx-auto p-6">
       <div className="text-center mb-10">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Send Files</h1>
-        <p className="text-gray-500 dark:text-gray-400">Share files securely via peer-to-peer connection</p>
+        <p className="text-gray-500 dark:text-gray-400 mb-4">Share files securely via peer-to-peer connection</p>
+        <div className="inline-flex items-center space-x-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 px-3 py-1 rounded-full text-xs font-medium border border-green-200 dark:border-green-800/30">
+          <Lock className="w-3.5 h-3.5" />
+          <span>End-to-End Encrypted</span>
+        </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-8 items-start">

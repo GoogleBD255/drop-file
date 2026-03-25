@@ -8,9 +8,32 @@ const IV_LENGTH = 12;
 
 export async function deriveKeyFromPin(pin: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(pin);
-  const hash = await window.crypto.subtle.digest('SHA-256', data);
-  return b64Encode(new Uint8Array(hash));
+  const keyMaterial = await window.crypto.subtle.importKey(
+    'raw',
+    encoder.encode(pin),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+
+  // Use a fixed salt for the app to ensure the same PIN generates the same key
+  const salt = encoder.encode('fast-share-secure-salt-v1');
+  
+  const key = await window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: 250000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: ALGORITHM, length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+
+  const exported = await window.crypto.subtle.exportKey('raw', key);
+  return b64Encode(new Uint8Array(exported));
 }
 
 /**
