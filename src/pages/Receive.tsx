@@ -3,28 +3,34 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { PeerConnection } from '../webrtc/peer';
 import { FileReceiver } from '../webrtc/fileReceiver';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
-import { Download, AlertCircle, Camera, Image as ImageIcon, Upload, Link as LinkIcon, RefreshCw } from 'lucide-react';
+import { Download, AlertCircle, Camera, Image as ImageIcon, Upload, Link as LinkIcon, RefreshCw, KeyRound } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'react-hot-toast';
-import { decryptText, encryptText } from '../lib/crypto';
+import { decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
+import { addHistoryRecord, updateHistoryRecord } from '../lib/db';
+import { v4 as uuidv4 } from 'uuid';
 
 export function Receive() {
   const { roomId } = useParams<{ roomId: string }>();
   const location = useLocation();
-  const encryptionKey = location.hash.replace('#', '');
+  const [encryptionKey, setEncryptionKey] = useState<string>(location.hash.replace('#', ''));
   const navigate = useNavigate();
   
   const [peerConnected, setPeerConnected] = useState(false);
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'scanning' | 'connecting' | 'connected' | 'error'>('connecting');
   const [scanMethod, setScanMethod] = useState<'camera' | 'file'>('camera');
-  const [cameraStarted, setCameraStarted] = useState(true);
-  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [manualMode, setManualMode] = useState<'code' | 'link'>('code');
+  const [pin, setPin] = useState(['', '', '', '']);
+  const [permissionState, setPermissionState] = useState<'prompt' | 'granted' | 'denied' | 'not_now'>(() => {
+    return localStorage.getItem('cameraPermissionGranted') === 'true' ? 'granted' : 'prompt';
+  });
   const [cameras, setCameras] = useState<any[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
   const [manualLink, setManualLink] = useState('');
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pinRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
   
   const peerRef = useRef<PeerConnection | null>(null);
   const receiversRef = useRef<Map<number, FileReceiver>>(new Map());
@@ -35,113 +41,145 @@ export function Receive() {
       return;
     }
 
-    setStatus('connecting');
-    const peer = new PeerConnection(roomId, false);
-    peerRef.current = peer;
-
-    peer.onConnectionStateChange = (state) => {
-      if (state === 'connected') {
-        setPeerConnected(true);
-        setStatus('connected');
-        toast.success('Connected to sender!');
-      } else if (state === 'disconnected' || state === 'failed') {
-        setPeerConnected(false);
-        setStatus('error');
-        toast.error('Connection to sender lost.');
+    const initConnection = async () => {
+      let key = location.hash.replace('#', '');
+      if (!key && roomId.length === 4) {
+        key = await deriveKeyFromPin(roomId);
       }
-    };
+      setEncryptionKey(key);
 
-    peer.onDataChannel = (channel) => {
-      const sendMessage = async (message: any) => {
-        if (encryptionKey) {
-          const encrypted = await encryptText(JSON.stringify(message), encryptionKey);
-          channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
-        } else {
-          channel.send(JSON.stringify(message));
+      setStatus('connecting');
+      const peer = new PeerConnection(roomId, false);
+      peerRef.current = peer;
+
+      peer.onConnectionStateChange = (state) => {
+        if (state === 'connected') {
+          setPeerConnected(true);
+          setStatus('connected');
+          toast.success('Connected to sender!');
+        } else if (state === 'disconnected' || state === 'failed') {
+          setPeerConnected(false);
+          setStatus('error');
+          toast.error('Connection to sender lost.');
         }
       };
 
-      peerRef.current!.sendMessage = sendMessage;
-
-      channel.onmessage = async (event) => {
-        if (typeof event.data === 'string') {
-          try {
-            let data = JSON.parse(event.data);
-            
-            if (data.type === 'encrypted' && encryptionKey) {
-              const decrypted = await decryptText(data.payload, encryptionKey);
-              data = JSON.parse(decrypted);
-            }
-
-            if (data.type === 'metadata') {
-              const receiver = new FileReceiver(data, encryptionKey);
-              
-              receiver.onProgress = (p, s) => {
-                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, progress: p, speed: s } : f));
-              };
-              
-              receiver.onComplete = (file) => {
-                const url = URL.createObjectURL(file);
-                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'completed', progress: 100, speed: 0, url } : f));
-                receiversRef.current.delete(data.fileId);
-                
-                toast.success(`File received: ${file.name}`);
-                
-                // Auto download
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = file.name;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-              };
-
-              receiver.onError = (err) => {
-                console.error(err);
-                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'error' } : f));
-                receiversRef.current.delete(data.fileId);
-                toast.error(`Error receiving file: ${data.name}. ${err}`);
-              };
-
-              receiversRef.current.set(data.fileId, receiver);
-              
-              setFiles(prev => [...prev, {
-                id: data.fileId,
-                name: data.name,
-                size: data.size,
-                type: data.fileType,
-                progress: 0,
-                speed: 0,
-                status: 'transferring'
-              }]);
-            } else if (data.type === 'complete') {
-              receiversRef.current.get(data.fileId)?.finish();
-            } else if (data.type === 'cancel') {
-              const receiver = receiversRef.current.get(data.fileId);
-              if (receiver) {
-                receiver.cancel();
-                receiversRef.current.delete(data.fileId);
-              }
-              setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'cancelled' } : f));
-            } else if (data.type === 'pause') {
-              setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
-            } else if (data.type === 'resume') {
-              setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
-            }
-          } catch (e) {
-            console.error("Error parsing message", e);
+      peer.onDataChannel = (channel) => {
+        const sendMessage = async (message: any) => {
+          if (key) {
+            const encrypted = await encryptText(JSON.stringify(message), key);
+            channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+          } else {
+            channel.send(JSON.stringify(message));
           }
-        } else if (event.data instanceof ArrayBuffer) {
-          const view = new DataView(event.data);
-          const fileId = view.getUint32(0);
-          const chunk = event.data.slice(4);
-          receiversRef.current.get(fileId)?.receiveChunk(chunk);
-        }
+        };
+
+        peerRef.current!.sendMessage = sendMessage;
+
+        channel.onmessage = async (event) => {
+          if (typeof event.data === 'string') {
+            try {
+              let data = JSON.parse(event.data);
+              
+              if (data.type === 'encrypted' && key) {
+                const decrypted = await decryptText(data.payload, key);
+                data = JSON.parse(decrypted);
+              }
+
+              if (data.type === 'metadata') {
+                const receiver = new FileReceiver(data, key);
+                const dbId = uuidv4();
+                
+                await addHistoryRecord({
+                  id: dbId,
+                  fileName: data.name,
+                  fileSize: data.size,
+                  fileType: data.fileType || '',
+                  direction: 'received',
+                  status: 'failed', // Default to failed until complete
+                  timestamp: Date.now(),
+                });
+                
+                receiver.onProgress = (p, s) => {
+                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, progress: p, speed: s } : f));
+                };
+                
+                receiver.onComplete = (file) => {
+                  const url = URL.createObjectURL(file);
+                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'completed', progress: 100, speed: 0, url } : f));
+                  receiversRef.current.delete(data.fileId);
+                  
+                  updateHistoryRecord(dbId, { status: 'completed', blob: file });
+                  toast.success(`File received: ${file.name}`);
+                  
+                  // Auto download
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = file.name;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                };
+
+                receiver.onError = (err) => {
+                  console.error(err);
+                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'error' } : f));
+                  receiversRef.current.delete(data.fileId);
+                  updateHistoryRecord(dbId, { status: 'failed' });
+                  toast.error(`Error receiving file: ${data.name}. ${err}`);
+                };
+
+                receiversRef.current.set(data.fileId, receiver);
+                
+                setFiles(prev => [...prev, {
+                  id: data.fileId,
+                  dbId,
+                  name: data.name,
+                  size: data.size,
+                  type: data.fileType,
+                  progress: 0,
+                  speed: 0,
+                  status: 'transferring'
+                }]);
+              } else if (data.type === 'complete') {
+                receiversRef.current.get(data.fileId)?.finish();
+              } else if (data.type === 'cancel') {
+                const receiver = receiversRef.current.get(data.fileId);
+                if (receiver) {
+                  receiver.cancel();
+                  receiversRef.current.delete(data.fileId);
+                }
+                setFiles(prev => prev.map(f => {
+                  if (f.id === data.fileId) {
+                    if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
+                    return { ...f, status: 'cancelled' };
+                  }
+                  return f;
+                }));
+              } else if (data.type === 'pause') {
+                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
+              } else if (data.type === 'resume') {
+                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
+              }
+            } catch (e) {
+              console.error("Error parsing message", e);
+            }
+          } else if (event.data instanceof ArrayBuffer) {
+            const view = new DataView(event.data);
+            const fileId = view.getUint32(0);
+            const chunk = event.data.slice(4);
+            receiversRef.current.get(fileId)?.receiveChunk(chunk);
+          }
+        };
       };
     };
+
+    initConnection();
 
     return () => {
-      peer.close();
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
       // Cleanup URLs
       setFiles(prev => {
         prev.forEach(f => {
@@ -150,7 +188,7 @@ export function Receive() {
         return prev;
       });
     };
-  }, [roomId, encryptionKey]);
+  }, [roomId, location.hash]);
 
   const handleScanSuccess = (text: string) => {
     try {
@@ -216,6 +254,50 @@ export function Receive() {
     }
   };
 
+  const handlePinChange = (index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    
+    const newPin = [...pin];
+    newPin[index] = value.slice(-1); // Only keep the last digit
+    setPin(newPin);
+
+    // Auto-advance to next input
+    if (value && index < 3) {
+      pinRefs[index + 1].current?.focus();
+    }
+  };
+
+  const handlePinKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !pin[index] && index > 0) {
+      // Move to previous input on backspace if current is empty
+      pinRefs[index - 1].current?.focus();
+    } else if (e.key === 'Enter') {
+      handlePinSubmit();
+    }
+  };
+
+  const handlePinSubmit = () => {
+    const fullPin = pin.join('');
+    if (fullPin.length === 4) {
+      navigate(`/receive/${fullPin}`);
+    } else {
+      toast.error('Please enter a 4-digit code.');
+    }
+  };
+
+  const handleAllowCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(track => track.stop());
+      localStorage.setItem('cameraPermissionGranted', 'true');
+      setPermissionState('granted');
+    } catch (err) {
+      console.error("Camera permission error:", err);
+      setPermissionState('denied');
+      localStorage.removeItem('cameraPermissionGranted');
+    }
+  };
+
   useEffect(() => {
     Html5Qrcode.getCameras().then(devices => {
       if (devices && devices.length > 1) {
@@ -227,13 +309,7 @@ export function Receive() {
   }, []);
 
   useEffect(() => {
-    if (status === 'scanning' && scanMethod === 'camera') {
-      setCameraStarted(true);
-    }
-  }, [status, scanMethod]);
-
-  useEffect(() => {
-    if (status === 'scanning' && scanMethod === 'camera' && cameraStarted) {
+    if (status === 'scanning' && scanMethod === 'camera' && permissionState === 'granted') {
       const html5QrCode = new Html5Qrcode("reader");
       html5QrCodeRef.current = html5QrCode;
       
@@ -256,17 +332,17 @@ export function Receive() {
           // ignore errors during scanning
         }
       ).then(() => {
-        setPermissionDenied(false);
+        // successfully started
       }).catch(err => {
         console.error("Error starting camera", err);
         const errorMsg = err.toString().toLowerCase();
         if (errorMsg.includes("notallowederror") || errorMsg.includes("permission denied")) {
-          setPermissionDenied(true);
+          setPermissionState('denied');
+          localStorage.removeItem('cameraPermissionGranted');
           toast.error("Camera permission was denied. Please check and try again.");
         } else {
           toast.error("Could not access camera. Please check permissions.");
         }
-        setCameraStarted(false);
       });
 
       return () => {
@@ -277,7 +353,7 @@ export function Receive() {
         }
       };
     }
-  }, [status, scanMethod, cameraStarted, currentCameraIndex, cameras, navigate]);
+  }, [status, scanMethod, permissionState, currentCameraIndex, cameras, navigate]);
 
   const switchCamera = () => {
     if (cameras.length > 1) {
@@ -324,50 +400,90 @@ export function Receive() {
               {scanMethod === 'camera' ? (
                 <div className="relative group">
                   <div id="reader" className="mx-auto w-full overflow-hidden rounded-3xl border-4 border-blue-500/20 dark:border-blue-400/20 bg-black aspect-square shadow-2xl relative z-0 flex items-center justify-center">
-                    {!cameraStarted && (
-                      <div className="z-20 flex flex-col items-center justify-center space-y-6 p-8 text-center">
-                        {permissionDenied ? (
-                          <div className="space-y-4">
-                            <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto">
-                              <Camera className="w-8 h-8 text-red-500" />
-                            </div>
-                            <div className="space-y-2">
-                              <p className="text-white font-bold text-lg">Permission Blocked</p>
-                              <p className="text-white/60 text-xs max-w-[280px] mx-auto leading-relaxed">
-                                Please check your camera permission and try again.
-                              </p>
-                            </div>
+                    {/* Custom Modal for Prompt */}
+                    {permissionState === 'prompt' && (
+                      <div className="absolute inset-0 z-30 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4 sm:p-6 text-center overflow-y-auto">
+                        <div className="my-auto flex flex-col items-center justify-center w-full">
+                          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4 flex-shrink-0">
+                            <Camera className="w-6 h-6 sm:w-8 h-8 text-blue-500" />
+                          </div>
+                          <h3 className="text-lg sm:text-xl font-bold text-white mb-1.5 sm:mb-2">Camera Permission Required</h3>
+                          <p className="text-white/70 text-xs sm:text-sm mb-5 sm:mb-6 max-w-[250px] sm:max-w-none">
+                            Camera access is needed to scan QR codes and transfer files securely.
+                          </p>
+                          <div className="flex flex-col w-full space-y-2.5 sm:space-y-3">
                             <button
-                              onClick={() => {
-                                window.location.hash = '';
-                                window.location.reload();
-                              }}
-                              className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-base font-bold transition-all shadow-lg shadow-blue-500/30 flex items-center space-x-2 mx-auto"
+                              onClick={handleAllowCamera}
+                              className="w-full py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-500/30 text-sm sm:text-base"
                             >
-                              <RefreshCw className="w-5 h-5" />
-                              <span>Try Again</span>
+                              Allow Camera
+                            </button>
+                            <button
+                              onClick={() => setPermissionState('not_now')}
+                              className="w-full py-2.5 sm:py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium transition-all text-sm sm:text-base"
+                            >
+                              Not Now
                             </button>
                           </div>
-                        ) : (
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Not Now State */}
+                    {permissionState === 'not_now' && (
+                      <div className="absolute inset-0 z-30 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4 sm:p-6 text-center overflow-y-auto">
+                        <div className="my-auto flex flex-col items-center justify-center w-full">
+                          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gray-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4 flex-shrink-0">
+                            <Camera className="w-6 h-6 sm:w-8 sm:h-8 text-gray-400" />
+                          </div>
+                          <h3 className="text-lg sm:text-xl font-bold text-white mb-1.5 sm:mb-2">Camera is Required</h3>
+                          <p className="text-white/70 text-xs sm:text-sm mb-5 sm:mb-6 max-w-[250px] sm:max-w-none">
+                            We cannot scan QR codes without camera access. You can upload an image instead.
+                          </p>
                           <button
-                            onClick={() => setCameraStarted(true)}
-                            className="flex flex-col items-center justify-center space-y-4 group"
+                            onClick={() => setPermissionState('prompt')}
+                            className="px-6 sm:px-8 py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-500/30 flex items-center space-x-2 text-sm sm:text-base"
                           >
-                            <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center shadow-lg shadow-blue-500/40 group-hover:scale-110 transition-transform">
-                              <Camera className="w-8 h-8 text-white" />
-                            </div>
-                            <div className="text-center">
-                              <p className="text-white font-bold text-lg">Enable Camera</p>
-                              <p className="text-white/60 text-sm">Tap to start scanning</p>
-                            </div>
+                            <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <span>Try Again</span>
                           </button>
-                        )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Denied State */}
+                    {permissionState === 'denied' && (
+                      <div className="absolute inset-0 z-30 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-4 sm:p-6 text-center overflow-y-auto">
+                        <div className="my-auto flex flex-col items-center justify-center w-full">
+                          <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-500/20 rounded-full flex items-center justify-center mb-2 sm:mb-4 flex-shrink-0">
+                            <AlertCircle className="w-5 h-5 sm:w-8 sm:h-8 text-red-500" />
+                          </div>
+                          <h3 className="text-base sm:text-xl font-bold text-white mb-2 sm:mb-2">Permission Blocked</h3>
+                          <div className="text-white/70 text-[10px] sm:text-sm mb-4 sm:mb-6 space-y-1 sm:space-y-2 text-left bg-white/5 p-3 sm:p-4 rounded-xl w-full">
+                            <p className="font-semibold text-white text-center mb-1 sm:mb-2">How to unblock:</p>
+                            <ul className="list-disc pl-4 space-y-0.5 sm:space-y-1">
+                              <li><strong>iPhone:</strong> Tap 'aA' in address bar → Website Settings → Allow Camera.</li>
+                              <li><strong>Android:</strong> Tap lock icon 🔒 in address bar → Permissions → Allow Camera.</li>
+                              <li><strong>Desktop:</strong> Click camera/lock icon in address bar → Allow.</li>
+                            </ul>
+                          </div>
+                          <button
+                            onClick={() => {
+                              window.location.hash = '';
+                              window.location.reload();
+                            }}
+                            className="px-6 sm:px-8 py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-500/30 flex items-center space-x-2 text-sm sm:text-base"
+                          >
+                            <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <span>Reload Page</span>
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
                   
                   {/* Scanner Overlay UI */}
-                  {cameraStarted && (
+                  {permissionState === 'granted' && (
                     <>
                       <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center">
                         <div className="absolute top-0 left-0 w-full h-1 bg-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.5)] animate-scan"></div>
@@ -387,11 +503,11 @@ export function Receive() {
               ) : (
                 <div 
                   onClick={() => fileInputRef.current?.click()}
-                  className="cursor-pointer mx-auto w-full overflow-hidden rounded-3xl border-4 border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 aspect-square flex flex-col items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-all shadow-xl"
+                  className="cursor-pointer mx-auto w-full overflow-hidden rounded-3xl border-4 border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 aspect-square flex flex-col items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-all shadow-xl p-4 sm:p-6 text-center"
                 >
-                  <Upload className="w-16 h-16 text-gray-400 mb-4" />
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">Upload QR Code</p>
-                  <p className="text-sm text-gray-500 mt-2">Tap to select an image</p>
+                  <Upload className="w-12 h-12 sm:w-16 sm:h-16 text-gray-400 mb-3 sm:mb-4 flex-shrink-0" />
+                  <p className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">Upload QR Code</p>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1.5 sm:mt-2">Tap to select an image</p>
                 </div>
               )}
             </div>
@@ -427,32 +543,85 @@ export function Receive() {
                   <div className="w-full border-t border-gray-200 dark:border-gray-700"></div>
                 </div>
                 <div className="relative flex justify-center">
-                  <span className="px-3 bg-white dark:bg-gray-800 text-sm font-medium text-gray-400 uppercase tracking-widest">Or enter manually</span>
+                  <span className="px-3 bg-white dark:bg-gray-800 text-sm font-medium text-gray-400 uppercase tracking-widest">Or connect manually</span>
                 </div>
               </div>
 
-              <form onSubmit={handleManualSubmit} className="space-y-3">
-                <div className="relative flex items-center">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <LinkIcon className="h-5 w-5 text-gray-400" />
+              <div className="flex bg-gray-100 dark:bg-gray-700/50 p-1.5 rounded-2xl">
+                <button
+                  onClick={() => setManualMode('code')}
+                  className={`flex-1 flex items-center justify-center space-x-2 py-2 rounded-xl text-sm font-medium transition-all ${
+                    manualMode === 'code' 
+                      ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                >
+                  <KeyRound className="w-4 h-4" />
+                  <span>4-Digit Code</span>
+                </button>
+                <button
+                  onClick={() => setManualMode('link')}
+                  className={`flex-1 flex items-center justify-center space-x-2 py-2 rounded-xl text-sm font-medium transition-all ${
+                    manualMode === 'link' 
+                      ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm' 
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                >
+                  <LinkIcon className="w-4 h-4" />
+                  <span>Paste Link</span>
+                </button>
+              </div>
+
+              {manualMode === 'code' ? (
+                <div className="space-y-4">
+                  <div className="flex justify-center space-x-3">
+                    {pin.map((digit, index) => (
+                      <input
+                        key={index}
+                        ref={pinRefs[index]}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="\d*"
+                        maxLength={1}
+                        value={digit}
+                        onChange={(e) => handlePinChange(index, e.target.value)}
+                        onKeyDown={(e) => handlePinKeyDown(index, e)}
+                        className="w-14 h-16 text-center text-2xl font-bold bg-gray-50 dark:bg-gray-900/50 border-2 border-gray-200 dark:border-gray-700 rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white"
+                      />
+                    ))}
                   </div>
-                  <input
-                    type="text"
-                    id="link-input"
-                    value={manualLink}
-                    onChange={(e) => setManualLink(e.target.value)}
-                    className="block w-full pl-12 pr-28 py-4 border-2 border-gray-100 dark:border-gray-700 rounded-2xl leading-5 bg-gray-50 dark:bg-gray-900/50 text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm transition-all"
-                    placeholder="Paste link or Room ID"
-                  />
                   <button
-                    type="submit"
-                    disabled={!manualLink.trim()}
-                    className="absolute right-2 top-2 bottom-2 px-5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20"
+                    onClick={handlePinSubmit}
+                    disabled={pin.join('').length !== 4}
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20"
                   >
                     Connect
                   </button>
                 </div>
-              </form>
+              ) : (
+                <form onSubmit={handleManualSubmit} className="space-y-3">
+                  <div className="relative flex items-center">
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <LinkIcon className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      id="link-input"
+                      value={manualLink}
+                      onChange={(e) => setManualLink(e.target.value)}
+                      className="block w-full pl-12 pr-28 py-4 border-2 border-gray-100 dark:border-gray-700 rounded-2xl leading-5 bg-gray-50 dark:bg-gray-900/50 text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm transition-all"
+                      placeholder="Paste connection link"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!manualLink.trim()}
+                      className="absolute right-2 top-2 bottom-2 px-5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white text-sm font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20"
+                    >
+                      Connect
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
 
             <input 

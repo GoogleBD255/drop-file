@@ -1,9 +1,19 @@
 import React, { useState, useMemo } from 'react';
 import { ProgressBar } from './ProgressBar';
-import { CheckCircle, AlertCircle, Clock, XCircle, RefreshCw, PauseCircle, PlayCircle, FileText, File as FileIcon, Film, Image as ImageIcon } from 'lucide-react';
+import { 
+  CheckCircle, 
+  AlertCircle, 
+  Clock, 
+  XCircle, 
+  RefreshCw, 
+  PauseCircle, 
+  PlayCircle
+} from 'lucide-react';
+import { getFileIconInfo } from '../lib/icons';
 
 export interface FileQueueItem {
   id: number;
+  dbId?: string;
   name: string;
   size: number;
   progress: number;
@@ -59,16 +69,11 @@ function Thumbnail({ file, url, type, name }: { file?: File, url?: string, type?
   }, [file, url, type, name, isImage, isVideo]);
 
   if (!previewUrl) {
-    const isAudio = type?.startsWith('audio/') || name.match(/\.(mp3|wav|ogg|m4a)$/i);
-    const isPdf = type === 'application/pdf' || name.endsWith('.pdf');
+    const { icon: Icon, color, bg } = getFileIconInfo(name, type);
     
     return (
-      <div className="w-10 h-10 bg-gray-100 dark:bg-gray-800 rounded-md flex items-center justify-center flex-shrink-0 border border-gray-200 dark:border-gray-700">
-        {isImage && <ImageIcon className="w-5 h-5 text-blue-500" />}
-        {isVideo && <Film className="w-5 h-5 text-purple-500" />}
-        {isAudio && <PlayCircle className="w-5 h-5 text-pink-500" />}
-        {isPdf && <FileText className="w-5 h-5 text-red-500" />}
-        {!isImage && !isVideo && !isAudio && !isPdf && <FileIcon className="w-5 h-5 text-gray-400" />}
+      <div className={`w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0 border border-gray-200 dark:border-gray-700 ${bg}`}>
+        <Icon className={`w-5 h-5 ${color}`} />
       </div>
     );
   }

@@ -8,7 +8,8 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
-import { Send as SendIcon, Download, Smartphone, Zap, RefreshCw } from 'lucide-react';
+import { History } from './pages/History';
+import { Send as SendIcon, Download, Smartphone, Zap, RefreshCw, Clock } from 'lucide-react';
 
 function Home() {
   return (
@@ -108,15 +109,22 @@ export default function App() {
                 <span className="font-bold text-xl tracking-tight">Fast Share</span>
               </Link>
 
-              {showInstallBtn && (
-                <button
-                  onClick={handleInstallClick}
-                  className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-blue-500/20"
-                >
-                  <Smartphone className="w-4 h-4" />
-                  <span>Install App</span>
-                </button>
-              )}
+              <div className="flex items-center space-x-4">
+                <Link to="/history" className="flex items-center space-x-2 px-3 py-2 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+                  <Clock className="w-5 h-5" />
+                  <span className="hidden sm:inline font-medium text-sm">History</span>
+                </Link>
+                
+                {showInstallBtn && (
+                  <button
+                    onClick={handleInstallClick}
+                    className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-blue-500/20"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    <span>Install App</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </nav>
@@ -127,6 +135,7 @@ export default function App() {
             <Route path="/send" element={<Send />} />
             <Route path="/receive" element={<Receive />} />
             <Route path="/receive/:roomId" element={<Receive />} />
+            <Route path="/history" element={<History />} />
           </Routes>
         </main>
       </div>

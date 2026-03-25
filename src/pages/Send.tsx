@@ -8,7 +8,8 @@ import { FileSender } from '../webrtc/fileSender';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
-import { generateEncryptionKey, decryptText, encryptText } from '../lib/crypto';
+import { generateEncryptionKey, decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
+import { addHistoryRecord, updateHistoryRecord } from '../lib/db';
 
 export function Send() {
   const [roomId, setRoomId] = useState<string>('');
@@ -22,84 +23,97 @@ export function Send() {
   const nextFileId = useRef(1);
 
   useEffect(() => {
-    const newRoomId = uuidv4().slice(0, 8);
-    const newKey = generateEncryptionKey();
-    setRoomId(newRoomId);
-    setEncryptionKey(newKey);
+    const initRoom = async () => {
+      const newRoomId = Math.floor(1000 + Math.random() * 9000).toString();
+      const newKey = await deriveKeyFromPin(newRoomId);
+      setRoomId(newRoomId);
+      setEncryptionKey(newKey);
 
-    const peer = new PeerConnection(newRoomId, true);
-    peerRef.current = peer;
+      const peer = new PeerConnection(newRoomId, true);
+      peerRef.current = peer;
 
-    peer.onConnectionStateChange = (state) => {
-      if (state === 'connected') {
-        setPeerConnected(true);
-        setStatus('connected');
-        toast.success('Receiver connected!');
-        
-        // Setup message listener for the data channel
-        if (peer.dataChannel) {
-          const sendMessage = async (message: any) => {
-            if (newKey) {
-              const encrypted = await encryptText(JSON.stringify(message), newKey);
-              peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
-            } else {
-              peer.dataChannel!.send(JSON.stringify(message));
-            }
-          };
-
-          peer.sendMessage = sendMessage;
-
-          peer.dataChannel.onmessage = async (event) => {
-            if (typeof event.data === 'string') {
-              try {
-                let data = JSON.parse(event.data);
-                
-                if (data.type === 'encrypted' && newKey) {
-                  const decrypted = await decryptText(data.payload, newKey);
-                  data = JSON.parse(decrypted);
-                }
-
-                if (data.type === 'cancel') {
-                  const sender = sendersRef.current.get(data.fileId);
-                  if (sender) {
-                    sender.cancel();
-                    sendersRef.current.delete(data.fileId);
-                  }
-                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'cancelled' } : f));
-                } else if (data.type === 'pause') {
-                  const sender = sendersRef.current.get(data.fileId);
-                  if (sender) {
-                    sender.pause();
-                    setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
-                  }
-                } else if (data.type === 'resume') {
-                  const sender = sendersRef.current.get(data.fileId);
-                  if (sender) {
-                    sender.resume();
-                    setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
-                  }
-                }
-              } catch (e) {
-                console.error("Error parsing message", e);
+      peer.onConnectionStateChange = (state) => {
+        if (state === 'connected') {
+          setPeerConnected(true);
+          setStatus('connected');
+          toast.success('Receiver connected!');
+          
+          // Setup message listener for the data channel
+          if (peer.dataChannel) {
+            const sendMessage = async (message: any) => {
+              if (newKey) {
+                const encrypted = await encryptText(JSON.stringify(message), newKey);
+                peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+              } else {
+                peer.dataChannel!.send(JSON.stringify(message));
               }
-            }
-          };
+            };
+
+            peer.sendMessage = sendMessage;
+
+            peer.dataChannel.onmessage = async (event) => {
+              if (typeof event.data === 'string') {
+                try {
+                  let data = JSON.parse(event.data);
+                  
+                  if (data.type === 'encrypted' && newKey) {
+                    const decrypted = await decryptText(data.payload, newKey);
+                    data = JSON.parse(decrypted);
+                  }
+
+                  if (data.type === 'cancel') {
+                    const sender = sendersRef.current.get(data.fileId);
+                    if (sender) {
+                      sender.cancel();
+                      sendersRef.current.delete(data.fileId);
+                    }
+                    setFiles(prev => prev.map(f => {
+                      if (f.id === data.fileId) {
+                        if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
+                        return { ...f, status: 'cancelled' };
+                      }
+                      return f;
+                    }));
+                  } else if (data.type === 'pause') {
+                    const sender = sendersRef.current.get(data.fileId);
+                    if (sender) {
+                      sender.pause();
+                      setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
+                    }
+                  } else if (data.type === 'resume') {
+                    const sender = sendersRef.current.get(data.fileId);
+                    if (sender) {
+                      sender.resume();
+                      setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
+                    }
+                  }
+                } catch (e) {
+                  console.error("Error parsing message", e);
+                }
+              }
+            };
+          }
+        } else if (state === 'disconnected' || state === 'failed') {
+          setPeerConnected(false);
+          setStatus('error');
+          toast.error('Connection to receiver lost.');
         }
-      } else if (state === 'disconnected' || state === 'failed') {
-        setPeerConnected(false);
-        setStatus('error');
-        toast.error('Connection to receiver lost.');
-      }
+      };
     };
 
+    initRoom();
+
     return () => {
-      peer.close();
+      if (peerRef.current) {
+        peerRef.current.close();
+      }
     };
   }, []);
 
   const handleFilesSelect = (selectedFiles: File[]) => {
     const newItems: FileQueueItem[] = selectedFiles.map(f => ({
       id: nextFileId.current++,
+      dbId: uuidv4(),
       name: f.name,
       size: f.size,
       progress: 0,
@@ -112,11 +126,21 @@ export function Send() {
     setFiles(prev => [...prev, ...newItems]);
     
     if (peerConnected && peerRef.current?.dataChannel) {
-      newItems.forEach(item => startTransfer(item.file!, item.id, peerRef.current!.dataChannel!));
+      newItems.forEach(item => startTransfer(item.file!, item.id, item.dbId!, peerRef.current!.dataChannel!));
     }
   };
 
-  const startTransfer = (fileToSend: File, fileId: number, channel: RTCDataChannel) => {
+  const startTransfer = async (fileToSend: File, fileId: number, dbId: string, channel: RTCDataChannel) => {
+    await addHistoryRecord({
+      id: dbId,
+      fileName: fileToSend.name,
+      fileSize: fileToSend.size,
+      fileType: fileToSend.type,
+      direction: 'sent',
+      status: 'failed', // Default to failed, update to completed when done
+      timestamp: Date.now(),
+    });
+
     const sender = new FileSender(channel, fileToSend, fileId, encryptionKey);
     sendersRef.current.set(fileId, sender);
 
@@ -127,6 +151,7 @@ export function Send() {
     sender.onComplete = () => {
       setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: 'completed', progress: 100, speed: 0 } : f));
       sendersRef.current.delete(fileId);
+      updateHistoryRecord(dbId, { status: 'completed' });
       toast.success(`File sent: ${fileToSend.name}`);
     };
 
@@ -134,6 +159,7 @@ export function Send() {
       console.error(err);
       setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: 'error' } : f));
       sendersRef.current.delete(fileId);
+      updateHistoryRecord(dbId, { status: 'failed' });
       toast.error(`Error sending file: ${fileToSend.name}`);
     };
 
@@ -146,14 +172,20 @@ export function Send() {
       sender.cancel();
       sendersRef.current.delete(id);
     }
-    setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'cancelled' } : f));
+    setFiles(prev => prev.map(f => {
+      if (f.id === id) {
+        if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
+        return { ...f, status: 'cancelled' };
+      }
+      return f;
+    }));
   };
 
   const handleRetry = (id: number) => {
     const fileItem = files.find(f => f.id === id);
     if (fileItem && fileItem.file && peerConnected && peerRef.current?.dataChannel) {
       setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'transferring', progress: 0, speed: 0 } : f));
-      startTransfer(fileItem.file, id, peerRef.current.dataChannel);
+      startTransfer(fileItem.file, id, fileItem.dbId!, peerRef.current.dataChannel);
     }
   };
 
@@ -179,7 +211,7 @@ export function Send() {
       files.forEach(f => {
         if (f.status === 'pending' && f.file) {
           setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'transferring' } : item));
-          startTransfer(f.file, f.id, peerRef.current!.dataChannel!);
+          startTransfer(f.file, f.id, f.dbId!, peerRef.current!.dataChannel!);
         }
       });
     }
@@ -199,7 +231,15 @@ export function Send() {
           <div className="text-center">
             <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">1. Scan to Connect</h2>
             {roomId ? (
-              <QRCodeBox url={receiveUrl} />
+              <div className="space-y-6">
+                <QRCodeBox url={receiveUrl} />
+                <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Or enter this 4-digit code:</p>
+                  <div className="text-4xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.2em]">
+                    {roomId}
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="w-[200px] h-[200px] bg-gray-100 dark:bg-gray-800 animate-pulse rounded-2xl"></div>
             )}

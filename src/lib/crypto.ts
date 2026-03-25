@@ -6,6 +6,13 @@
 const ALGORITHM = 'AES-GCM';
 const IV_LENGTH = 12;
 
+export async function deriveKeyFromPin(pin: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(pin);
+  const hash = await window.crypto.subtle.digest('SHA-256', data);
+  return b64Encode(new Uint8Array(hash));
+}
+
 /**
  * Generates a random base64 string to be used as an encryption key.
  */
