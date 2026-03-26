@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { QRCodeBox } from '../components/QRCodeBox';
 import { FileDrop } from '../components/FileDrop';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
 import { PeerConnection } from '../webrtc/peer';
@@ -41,6 +40,7 @@ export function Send() {
           // Setup message listener for the data channel
           if (peer.dataChannel) {
             const sendMessage = async (message: any) => {
+              peer.resetActivity();
               if (newKey) {
                 const encrypted = await encryptText(JSON.stringify(message), newKey);
                 peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
@@ -52,10 +52,13 @@ export function Send() {
             peer.sendMessage = sendMessage;
 
             peer.dataChannel.onmessage = async (event) => {
+              peer.resetActivity();
               if (typeof event.data === 'string') {
                 try {
                   let data = JSON.parse(event.data);
                   
+                  if (data.type === 'ping') return; // Ignore ping messages
+
                   if (data.type === 'encrypted' && newKey) {
                     const decrypted = await decryptText(data.payload, newKey);
                     data = JSON.parse(decrypted);
@@ -86,6 +89,8 @@ export function Send() {
                       sender.resume();
                       setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
                     }
+                  } else if (data.type === 'disconnect') {
+                    handleManualDisconnect();
                   }
                 } catch (e) {
                   console.error("Error parsing message", e);
@@ -93,11 +98,17 @@ export function Send() {
               }
             };
           }
-        } else if (state === 'disconnected' || state === 'failed') {
+        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
           setPeerConnected(false);
           setStatus('error');
           toast.error('Connection to receiver lost.');
         }
+      };
+
+      peer.onDisconnect = () => {
+        setPeerConnected(false);
+        setStatus('error');
+        toast.error('Disconnected due to inactivity.');
       };
     };
 
@@ -111,6 +122,7 @@ export function Send() {
   }, []);
 
   const handleFilesSelect = (selectedFiles: File[]) => {
+    peerRef.current?.resetActivity();
     const newItems: FileQueueItem[] = selectedFiles.map(f => ({
       id: nextFileId.current++,
       dbId: uuidv4(),
@@ -145,6 +157,7 @@ export function Send() {
     sendersRef.current.set(fileId, sender);
 
     sender.onProgress = (p, s) => {
+      peerRef.current?.resetActivity();
       setFiles(prev => prev.map(f => f.id === fileId ? { ...f, progress: p, speed: s } : f));
     };
 
@@ -205,6 +218,21 @@ export function Send() {
     }
   };
 
+  const handleManualDisconnect = () => {
+    if (peerRef.current) {
+      // Try to notify the other peer before closing
+      peerRef.current.sendMessage?.({ type: 'disconnect' }).catch(() => {});
+      setTimeout(() => {
+        peerRef.current?.close();
+        setPeerConnected(false);
+        setStatus('waiting');
+        toast.success('Disconnected successfully');
+        // Reload page to reset state completely
+        window.location.reload();
+      }, 100);
+    }
+  };
+
   // If files selected before peer connected, start when connected
   useEffect(() => {
     if (peerConnected && status === 'connected' && peerRef.current?.dataChannel) {
@@ -217,7 +245,26 @@ export function Send() {
     }
   }, [peerConnected, status]);
 
-  const receiveUrl = `${window.location.origin}/receive/${roomId}${encryptionKey ? '#' + encryptionKey : ''}`;
+  // Reset activity on user interaction
+  useEffect(() => {
+    const handleUserActivity = () => {
+      if (peerConnected) {
+        peerRef.current?.resetActivity();
+      }
+    };
+
+    window.addEventListener('mousemove', handleUserActivity);
+    window.addEventListener('keydown', handleUserActivity);
+    window.addEventListener('click', handleUserActivity);
+    window.addEventListener('touchstart', handleUserActivity);
+
+    return () => {
+      window.removeEventListener('mousemove', handleUserActivity);
+      window.removeEventListener('keydown', handleUserActivity);
+      window.removeEventListener('click', handleUserActivity);
+      window.removeEventListener('touchstart', handleUserActivity);
+    };
+  }, [peerConnected]);
 
   return (
     <div className="max-w-4xl mx-auto p-6">
@@ -232,28 +279,36 @@ export function Send() {
 
       <div className="grid md:grid-cols-2 gap-8 items-start">
         <div className="flex flex-col items-center space-y-6 md:sticky md:top-24">
-          <div className="text-center">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">1. Scan to Connect</h2>
+          <div className="text-center w-full">
+            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">1. Share Connection Code</h2>
             {roomId ? (
-              <div className="space-y-6">
-                <QRCodeBox url={receiveUrl} />
-                <div className="bg-white dark:bg-gray-800 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-700">
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Or enter this 4-digit code:</p>
-                  <div className="text-4xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.2em]">
-                    {roomId}
-                  </div>
+              <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto">
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Enter this 4-digit code on the receiving device:</p>
+                <div className="text-6xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.2em] py-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+                  {roomId}
                 </div>
               </div>
             ) : (
-              <div className="w-[200px] h-[200px] bg-gray-100 dark:bg-gray-800 animate-pulse rounded-2xl"></div>
+              <div className="w-full max-w-sm h-[200px] bg-gray-100 dark:bg-gray-800 animate-pulse rounded-2xl mx-auto"></div>
             )}
           </div>
           
-          <div className="flex items-center space-x-2 text-sm">
-            <div className={`w-3 h-3 rounded-full ${peerConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></div>
-            <span className="text-gray-600 dark:text-gray-300">
-              {peerConnected ? 'Receiver Connected' : 'Waiting for receiver...'}
-            </span>
+          <div className="flex flex-col items-center space-y-4">
+            <div className="flex items-center space-x-2 text-sm">
+              <div className={`w-3 h-3 rounded-full ${peerConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></div>
+              <span className="text-gray-600 dark:text-gray-300">
+                {peerConnected ? 'Receiver Connected' : 'Waiting for receiver...'}
+              </span>
+            </div>
+            
+            {peerConnected && (
+              <button
+                onClick={handleManualDisconnect}
+                className="px-4 py-2 bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-xl text-sm font-semibold transition-colors"
+              >
+                Disconnect
+              </button>
+            )}
           </div>
           
           {status === 'error' && (

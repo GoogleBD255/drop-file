@@ -12,6 +12,11 @@ export class PeerConnection {
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   public onPeerLeft?: () => void;
   public sendMessage?: (message: any) => Promise<void>;
+  public onDisconnect?: () => void;
+
+  private pingInterval?: number;
+  private inactivityTimeout?: number;
+  private readonly INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 minutes
 
   constructor(roomId: string, isInitiator: boolean) {
     this.roomId = roomId;
@@ -46,6 +51,22 @@ export class PeerConnection {
 
     this.setupWebSocket();
     this.setupPeerConnection();
+    this.resetInactivityTimeout();
+  }
+
+  public resetActivity() {
+    this.resetInactivityTimeout();
+  }
+
+  private resetInactivityTimeout() {
+    if (this.inactivityTimeout) {
+      window.clearTimeout(this.inactivityTimeout);
+    }
+    this.inactivityTimeout = window.setTimeout(() => {
+      console.log("Disconnecting due to inactivity");
+      this.onDisconnect?.();
+      this.close();
+    }, this.INACTIVITY_LIMIT);
   }
 
   private setupWebSocket() {
@@ -76,6 +97,11 @@ export class PeerConnection {
 
     this.pc.onconnectionstatechange = () => {
       this.onConnectionStateChange?.(this.pc.connectionState);
+      if (this.pc.connectionState === 'connected') {
+        this.startPing();
+      } else if (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed' || this.pc.connectionState === 'closed') {
+        this.stopPing();
+      }
     };
 
     if (this.isInitiator) {
@@ -94,7 +120,35 @@ export class PeerConnection {
 
   private setupDataChannel(channel: RTCDataChannel) {
     channel.binaryType = "arraybuffer";
-    // Handled by sender/receiver classes
+    
+    // We need to intercept messages to reset activity, but we can't easily override onmessage here
+    // without breaking the sender/receiver logic. So we'll rely on the UI components to call resetActivity()
+    // However, we can add a listener that doesn't overwrite the main one.
+    channel.addEventListener('message', () => {
+      this.resetActivity();
+    });
+  }
+
+  private startPing() {
+    this.stopPing();
+    this.pingInterval = window.setInterval(() => {
+      if (this.dataChannel?.readyState === 'open') {
+        // Send a ping message. The receiver will ignore it if it doesn't match their expected format,
+        // but it keeps the connection alive.
+        try {
+          this.dataChannel.send(JSON.stringify({ type: 'ping' }));
+        } catch (e) {
+          console.error("Failed to send ping", e);
+        }
+      }
+    }, 10000); // Send ping every 10 seconds
+  }
+
+  private stopPing() {
+    if (this.pingInterval) {
+      window.clearInterval(this.pingInterval);
+      this.pingInterval = undefined;
+    }
   }
 
   private async createOffer() {
@@ -148,6 +202,10 @@ export class PeerConnection {
   }
 
   public close() {
+    this.stopPing();
+    if (this.inactivityTimeout) {
+      window.clearTimeout(this.inactivityTimeout);
+    }
     this.pc.close();
     this.ws.close();
   }

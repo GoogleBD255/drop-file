@@ -36,7 +36,7 @@ function Home() {
             <SendIcon className="w-8 h-8 text-blue-600 dark:text-blue-400" />
           </div>
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Send Files</h2>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Generate a QR code and send files to another device</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Generate a 4-digit code and send files to another device</p>
         </Link>
 
         <Link 
@@ -47,7 +47,7 @@ function Home() {
             <Download className="w-8 h-8 text-green-600 dark:text-green-400" />
           </div>
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Receive Files</h2>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Scan a QR code to receive files from another device</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Enter a 4-digit code to receive files from another device</p>
         </Link>
       </div>
       <div className="mt-16 pt-8 border-t border-gray-100 dark:border-gray-800">
