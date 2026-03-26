@@ -12,6 +12,18 @@ import { History } from './pages/History';
 import { Send as SendIcon, Download, Smartphone, Zap, RefreshCw, Clock, Lock } from 'lucide-react';
 
 function Home() {
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  useEffect(() => {
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
+    const isStandaloneMode = ('standalone' in window.navigator && (window.navigator as any).standalone) || window.matchMedia('(display-mode: standalone)').matches;
+    
+    setIsIOS(isIosDevice);
+    setIsStandalone(isStandaloneMode);
+  }, []);
+
   return (
     <div className="max-w-4xl mx-auto p-6 text-center pt-20">
       <h1 className="text-5xl font-bold text-gray-900 dark:text-white tracking-tight mb-6">
@@ -27,6 +39,16 @@ function Home() {
         </div>
       </div>
       
+      {isIOS && !isStandalone && (
+        <div className="mb-8 max-w-md mx-auto bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 text-sm text-blue-800 dark:text-blue-300 flex items-start space-x-3 text-left">
+          <Smartphone className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold mb-1">Install on iOS for the best experience</p>
+            <p>Tap the <strong>Share</strong> button in Safari and select <strong>"Add to Home Screen"</strong> to install Fast Share.</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid sm:grid-cols-2 gap-6 max-w-2xl mx-auto">
         <Link 
           to="/send" 
