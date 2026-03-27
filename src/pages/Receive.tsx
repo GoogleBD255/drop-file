@@ -402,27 +402,16 @@ export function Receive() {
         )}
 
         {status === 'error' && (
-          <div className="text-center py-12 max-w-sm mx-auto">
+          <div className="text-center py-8">
             <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-            <h2 className="text-xl font-medium text-red-900 dark:text-red-100 mb-2">Connection Failed</h2>
-            <p className="text-red-700 dark:text-red-300 text-sm mb-6">
-              The connection to the sender was lost or couldn't be established.
-            </p>
-            <div className="text-left text-[10px] space-y-2 text-gray-600 dark:text-gray-400 border-t border-red-100 dark:border-red-800/50 pt-4 mb-6">
-              <p className="font-semibold text-gray-700 dark:text-gray-300">Tips for Hotspot users:</p>
-              <ul className="list-disc pl-4 space-y-1">
-                <li>Turn off VPN on both devices</li>
-                <li>Try using a different browser (Chrome/Edge)</li>
-                <li>Refresh both pages and try a new code</li>
-                <li>Ensure "Mobile Data" is active on the phone</li>
-              </ul>
-            </div>
+            <h2 className="text-xl font-medium text-red-900 dark:text-red-100 mb-2">Connection Lost</h2>
+            <p className="text-red-700 dark:text-red-300 mb-6">The connection to the sender was lost.</p>
             <button
               onClick={() => {
                 window.location.hash = '';
                 window.location.reload();
               }}
-              className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-red-500/20"
+              className="px-6 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-full transition-colors"
             >
               Try Again
             </button>

@@ -35,9 +35,6 @@ export class PeerConnection {
         { urls: "stun:stun4.l.google.com:19302" },
         { urls: "stun:stun.services.mozilla.com" },
         { urls: "stun:stun.cloudflare.com:3478" },
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun.voipstunt.com" },
-        { urls: "stun:iphone-stun.strato-iphone.de:3478" },
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -54,8 +51,7 @@ export class PeerConnection {
           credential: "openrelayproject"
         }
       ],
-      iceCandidatePoolSize: 10,
-      bundlePolicy: "max-bundle"
+      iceCandidatePoolSize: 10
     });
 
     this.setupWebSocket();
@@ -127,10 +123,6 @@ export class PeerConnection {
       if (event.candidate) {
         this.sendSignal({ candidate: event.candidate });
       }
-    };
-
-    this.pc.onicegatheringstatechange = () => {
-      console.log("ICE Gathering State:", this.pc.iceGatheringState);
     };
 
     this.pc.oniceconnectionstatechange = () => {

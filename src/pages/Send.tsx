@@ -343,21 +343,10 @@ export function Send() {
             </div>
           
           {status === 'error' && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-6 text-center w-full max-w-sm">
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 text-center w-full max-w-sm">
               <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-              <h3 className="text-sm font-medium text-red-900 dark:text-red-100 mb-1">Connection Failed</h3>
-              <p className="text-red-700 dark:text-red-300 text-xs mb-4">
-                We couldn't establish a secure connection. This often happens on mobile hotspots or restricted networks.
-              </p>
-              <div className="text-left text-[10px] space-y-2 text-gray-600 dark:text-gray-400 border-t border-red-100 dark:border-red-800/50 pt-4 mb-4">
-                <p className="font-semibold text-gray-700 dark:text-gray-300">Tips for Hotspot users:</p>
-                <ul className="list-disc pl-4 space-y-1">
-                  <li>Turn off VPN on both devices</li>
-                  <li>Try using a different browser (Chrome/Edge)</li>
-                  <li>Refresh both pages and try a new code</li>
-                  <li>Ensure "Mobile Data" is active on the phone</li>
-                </ul>
-              </div>
+              <h3 className="text-sm font-medium text-red-900 dark:text-red-100 mb-1">Connection Error</h3>
+              <p className="text-red-700 dark:text-red-300 text-xs mb-4">The peer connection was lost or failed.</p>
               <button
                 onClick={() => {
                   window.location.hash = '';
