@@ -16,6 +16,7 @@ export function Send() {
   const [peerConnected, setPeerConnected] = useState(false);
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'waiting' | 'connected' | 'error'>('waiting');
+  const [connectionDetail, setConnectionDetail] = useState<string>('Waiting for receiver...');
   
   const peerRef = useRef<PeerConnection | null>(null);
   const sendersRef = useRef<Map<number, FileSender>>(new Map());
@@ -31,8 +32,15 @@ export function Send() {
       const peer = new PeerConnection(newRoomId, true);
       peerRef.current = peer;
 
+      peer.onError = (msg) => {
+        toast.error(msg);
+      };
+
       peer.onConnectionStateChange = (state) => {
-        if (state === 'connected') {
+        console.log("Send Peer State:", state);
+        if (state === 'connecting') {
+          setConnectionDetail('Exchanging signals with receiver...');
+        } else if (state === 'connected') {
           setPeerConnected(true);
           setStatus('connected');
           toast.success('Receiver connected!');
@@ -41,6 +49,25 @@ export function Send() {
           if (peer.dataChannel) {
             const sendMessage = async (message: any) => {
               peer.resetActivity();
+              
+              if (peer.dataChannel?.readyState !== 'open') {
+                await new Promise((resolve, reject) => {
+                  const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
+                  const check = () => {
+                    if (peer.dataChannel?.readyState === 'open') {
+                      clearTimeout(timeout);
+                      resolve(null);
+                    } else if (peer.dataChannel?.readyState === 'closed' || peer.dataChannel?.readyState === 'closing') {
+                      clearTimeout(timeout);
+                      reject(new Error("Data channel closed"));
+                    } else {
+                      setTimeout(check, 500);
+                    }
+                  };
+                  check();
+                });
+              }
+
               if (newKey) {
                 const encrypted = await encryptText(JSON.stringify(message), newKey);
                 peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
@@ -98,10 +125,14 @@ export function Send() {
               }
             };
           }
-        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        } else if (state === 'disconnected') {
+          setConnectionDetail('Connection unstable, attempting to reconnect...');
+          toast.loading('Reconnecting...', { id: 'reconnect-toast' });
+        } else if (state === 'failed' || state === 'closed') {
           setPeerConnected(false);
           setStatus('error');
-          toast.error('Connection to receiver lost.');
+          setConnectionDetail('Connection failed');
+          toast.error('Connection failed.', { id: 'reconnect-toast' });
         }
       };
 
@@ -293,29 +324,40 @@ export function Send() {
             )}
           </div>
           
-          <div className="flex flex-col items-center space-y-4">
-            <div className="flex items-center space-x-2 text-sm">
-              <div className={`w-3 h-3 rounded-full ${peerConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></div>
-              <span className="text-gray-600 dark:text-gray-300">
-                {peerConnected ? 'Receiver Connected' : 'Waiting for receiver...'}
-              </span>
+            <div className="flex flex-col items-center space-y-4">
+              <div className="flex items-center space-x-2 text-sm">
+                <div className={`w-3 h-3 rounded-full ${peerConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></div>
+                <span className="text-gray-600 dark:text-gray-300">
+                  {peerConnected ? 'Receiver Connected' : connectionDetail}
+                </span>
+              </div>
+              
+              {peerConnected && (
+                <button
+                  onClick={handleManualDisconnect}
+                  className="px-4 py-2 bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-xl text-sm font-semibold transition-colors"
+                >
+                  Disconnect
+                </button>
+              )}
             </div>
-            
-            {peerConnected && (
-              <button
-                onClick={handleManualDisconnect}
-                className="px-4 py-2 bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-xl text-sm font-semibold transition-colors"
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
           
           {status === 'error' && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 text-center w-full max-w-sm">
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-6 text-center w-full max-w-sm">
               <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-              <h3 className="text-sm font-medium text-red-900 dark:text-red-100 mb-1">Connection Error</h3>
-              <p className="text-red-700 dark:text-red-300 text-xs mb-4">The peer connection was lost or failed.</p>
+              <h3 className="text-sm font-medium text-red-900 dark:text-red-100 mb-1">Connection Failed</h3>
+              <p className="text-red-700 dark:text-red-300 text-xs mb-4">
+                We couldn't establish a secure connection. This often happens on mobile hotspots or restricted networks.
+              </p>
+              <div className="text-left text-[10px] space-y-2 text-gray-600 dark:text-gray-400 border-t border-red-100 dark:border-red-800/50 pt-4 mb-4">
+                <p className="font-semibold text-gray-700 dark:text-gray-300">Tips for Hotspot users:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li>Turn off VPN on both devices</li>
+                  <li>Try using a different browser (Chrome/Edge)</li>
+                  <li>Refresh both pages and try a new code</li>
+                  <li>Ensure "Mobile Data" is active on the phone</li>
+                </ul>
+              </div>
               <button
                 onClick={() => {
                   window.location.hash = '';

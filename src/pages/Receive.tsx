@@ -18,6 +18,7 @@ export function Receive() {
   const [peerConnected, setPeerConnected] = useState(false);
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'scanning' | 'connecting' | 'connected' | 'error'>('connecting');
+  const [connectionDetail, setConnectionDetail] = useState<string>('Establishing secure WebRTC connection');
   const [pin, setPin] = useState(['', '', '', '']);
   const pinRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
   
@@ -38,24 +39,54 @@ export function Receive() {
       setEncryptionKey(key);
 
       setStatus('connecting');
+      setConnectionDetail('Connecting to signaling server...');
       const peer = new PeerConnection(roomId, false);
       peerRef.current = peer;
 
+      peer.onError = (msg) => {
+        toast.error(msg);
+      };
+
       peer.onConnectionStateChange = (state) => {
-        if (state === 'connected') {
+        console.log("Receive Peer State:", state);
+        if (state === 'connecting') {
+          setConnectionDetail('Exchanging signals with sender...');
+        } else if (state === 'connected') {
           setPeerConnected(true);
           setStatus('connected');
           toast.success('Connected to sender!');
-        } else if (state === 'disconnected' || state === 'failed') {
+        } else if (state === 'disconnected') {
+          setConnectionDetail('Connection unstable, attempting to reconnect...');
+          toast.loading('Reconnecting...', { id: 'reconnect-toast' });
+        } else if (state === 'failed') {
           setPeerConnected(false);
           setStatus('error');
-          toast.error('Connection to sender lost.');
+          toast.error('Connection failed.', { id: 'reconnect-toast' });
         }
       };
 
       peer.onDataChannel = (channel) => {
         const sendMessage = async (message: any) => {
           peer.resetActivity();
+          
+          if (channel.readyState !== 'open') {
+            await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
+              const check = () => {
+                if (channel.readyState === 'open') {
+                  clearTimeout(timeout);
+                  resolve(null);
+                } else if (channel.readyState === 'closed' || channel.readyState === 'closing') {
+                  clearTimeout(timeout);
+                  reject(new Error("Data channel closed"));
+                } else {
+                  setTimeout(check, 500);
+                }
+              };
+              check();
+            });
+          }
+
           if (key) {
             const encrypted = await encryptText(JSON.stringify(message), key);
             channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
@@ -330,7 +361,7 @@ export function Receive() {
           <div className="text-center py-12">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
             <h2 className="text-xl font-medium text-gray-900 dark:text-white">Connecting to Peer...</h2>
-            <p className="text-gray-500 dark:text-gray-400 mt-2">Establishing secure WebRTC connection</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-2">{connectionDetail}</p>
           </div>
         )}
 
@@ -371,16 +402,27 @@ export function Receive() {
         )}
 
         {status === 'error' && (
-          <div className="text-center py-8">
+          <div className="text-center py-12 max-w-sm mx-auto">
             <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-            <h2 className="text-xl font-medium text-red-900 dark:text-red-100 mb-2">Connection Lost</h2>
-            <p className="text-red-700 dark:text-red-300 mb-6">The connection to the sender was lost.</p>
+            <h2 className="text-xl font-medium text-red-900 dark:text-red-100 mb-2">Connection Failed</h2>
+            <p className="text-red-700 dark:text-red-300 text-sm mb-6">
+              The connection to the sender was lost or couldn't be established.
+            </p>
+            <div className="text-left text-[10px] space-y-2 text-gray-600 dark:text-gray-400 border-t border-red-100 dark:border-red-800/50 pt-4 mb-6">
+              <p className="font-semibold text-gray-700 dark:text-gray-300">Tips for Hotspot users:</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>Turn off VPN on both devices</li>
+                <li>Try using a different browser (Chrome/Edge)</li>
+                <li>Refresh both pages and try a new code</li>
+                <li>Ensure "Mobile Data" is active on the phone</li>
+              </ul>
+            </div>
             <button
               onClick={() => {
                 window.location.hash = '';
                 window.location.reload();
               }}
-              className="px-6 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-full transition-colors"
+              className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-red-500/20"
             >
               Try Again
             </button>

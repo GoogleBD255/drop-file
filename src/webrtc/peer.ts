@@ -13,10 +13,12 @@ export class PeerConnection {
   public onPeerLeft?: () => void;
   public sendMessage?: (message: any) => Promise<void>;
   public onDisconnect?: () => void;
+  public onError?: (message: string) => void;
 
   private pingInterval?: number;
+  private wsPingInterval?: number;
   private inactivityTimeout?: number;
-  private readonly INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 minutes
+  private readonly INACTIVITY_LIMIT = 10 * 60 * 1000; // 10 minutes
 
   constructor(roomId: string, isInitiator: boolean) {
     this.roomId = roomId;
@@ -31,6 +33,11 @@ export class PeerConnection {
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
+        { urls: "stun:stun.services.mozilla.com" },
+        { urls: "stun:stun.cloudflare.com:3478" },
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun.voipstunt.com" },
+        { urls: "stun:iphone-stun.strato-iphone.de:3478" },
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -46,7 +53,9 @@ export class PeerConnection {
           username: "openrelayproject",
           credential: "openrelayproject"
         }
-      ]
+      ],
+      iceCandidatePoolSize: 10,
+      bundlePolicy: "max-bundle"
     });
 
     this.setupWebSocket();
@@ -72,19 +81,44 @@ export class PeerConnection {
   private setupWebSocket() {
     this.ws.onopen = () => {
       this.ws.send(JSON.stringify({ type: "join", room: this.roomId }));
+      
+      // Keep signaling WebSocket alive
+      this.wsPingInterval = window.setInterval(() => {
+        if (this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "ws-ping" }));
+        }
+      }, 30000);
     };
 
     this.ws.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "peer-joined") {
-        if (this.isInitiator) {
-          this.createOffer();
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "error") {
+          this.onError?.(data.message);
+          this.onConnectionStateChange?.('failed');
+          return;
         }
-      } else if (data.type === "peer-left") {
-        this.onPeerLeft?.();
-      } else if (data.type === "signal") {
-        await this.handleSignal(data.payload);
+        if (data.type === "peer-joined") {
+          if (this.isInitiator) {
+            // Small delay to ensure both sides are ready
+            setTimeout(() => this.createOffer(), 500);
+          }
+        } else if (data.type === "peer-left") {
+          this.onPeerLeft?.();
+        } else if (data.type === "signal") {
+          await this.handleSignal(data.payload);
+        }
+      } catch (e) {
+        console.error("Signaling message error", e);
       }
+    };
+
+    this.ws.onerror = (err) => {
+      console.error("Signaling WebSocket error", err);
+    };
+
+    this.ws.onclose = () => {
+      if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
     };
   }
 
@@ -95,12 +129,38 @@ export class PeerConnection {
       }
     };
 
+    this.pc.onicegatheringstatechange = () => {
+      console.log("ICE Gathering State:", this.pc.iceGatheringState);
+    };
+
+    this.pc.oniceconnectionstatechange = () => {
+      console.log("ICE Connection State:", this.pc.iceConnectionState);
+      if (this.pc.iceConnectionState === 'failed') {
+        this.pc.restartIce();
+      }
+    };
+
     this.pc.onconnectionstatechange = () => {
-      this.onConnectionStateChange?.(this.pc.connectionState);
-      if (this.pc.connectionState === 'connected') {
+      console.log("Connection State:", this.pc.connectionState);
+      const state = this.pc.connectionState;
+      
+      if (state === 'connected') {
         this.startPing();
-      } else if (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed' || this.pc.connectionState === 'closed') {
+        this.onConnectionStateChange?.(state);
+      } else if (state === 'disconnected') {
+        console.log("Connection disconnected, waiting for potential recovery...");
+        this.onConnectionStateChange?.(state);
+      } else if (state === 'failed') {
+        console.log("Connection failed, attempting ICE restart...");
+        try {
+          this.pc.restartIce();
+        } catch (e) {
+          console.error("Failed to restart ICE", e);
+        }
+        this.onConnectionStateChange?.(state);
+      } else if (state === 'closed') {
         this.stopPing();
+        this.onConnectionStateChange?.(state);
       }
     };
 
@@ -203,6 +263,7 @@ export class PeerConnection {
 
   public close() {
     this.stopPing();
+    if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
     if (this.inactivityTimeout) {
       window.clearTimeout(this.inactivityTimeout);
     }
