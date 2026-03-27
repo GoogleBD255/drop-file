@@ -18,6 +18,7 @@ export function Receive() {
   const [peerConnected, setPeerConnected] = useState(false);
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'scanning' | 'connecting' | 'connected' | 'error'>('connecting');
+  const [connectionDetail, setConnectionDetail] = useState<string>('Establishing secure WebRTC connection');
   const [pin, setPin] = useState(['', '', '', '']);
   const pinRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
   
@@ -38,11 +39,15 @@ export function Receive() {
       setEncryptionKey(key);
 
       setStatus('connecting');
+      setConnectionDetail('Connecting to signaling server...');
       const peer = new PeerConnection(roomId, false);
       peerRef.current = peer;
 
       peer.onConnectionStateChange = (state) => {
-        if (state === 'connected') {
+        console.log("Receive Peer State:", state);
+        if (state === 'connecting') {
+          setConnectionDetail('Exchanging signals with sender...');
+        } else if (state === 'connected') {
           setPeerConnected(true);
           setStatus('connected');
           toast.success('Connected to sender!');
@@ -330,7 +335,7 @@ export function Receive() {
           <div className="text-center py-12">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
             <h2 className="text-xl font-medium text-gray-900 dark:text-white">Connecting to Peer...</h2>
-            <p className="text-gray-500 dark:text-gray-400 mt-2">Establishing secure WebRTC connection</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-2">{connectionDetail}</p>
           </div>
         )}
 

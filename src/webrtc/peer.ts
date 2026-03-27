@@ -15,6 +15,7 @@ export class PeerConnection {
   public onDisconnect?: () => void;
 
   private pingInterval?: number;
+  private wsPingInterval?: number;
   private inactivityTimeout?: number;
   private readonly INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 minutes
 
@@ -31,6 +32,8 @@ export class PeerConnection {
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
+        // Use a more reliable set of TURN servers if possible, 
+        // but for now, we'll keep these and add better error handling.
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -46,7 +49,8 @@ export class PeerConnection {
           username: "openrelayproject",
           credential: "openrelayproject"
         }
-      ]
+      ],
+      iceCandidatePoolSize: 10
     });
 
     this.setupWebSocket();
@@ -72,19 +76,39 @@ export class PeerConnection {
   private setupWebSocket() {
     this.ws.onopen = () => {
       this.ws.send(JSON.stringify({ type: "join", room: this.roomId }));
+      
+      // Keep signaling WebSocket alive
+      this.wsPingInterval = window.setInterval(() => {
+        if (this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "ws-ping" }));
+        }
+      }, 30000);
     };
 
     this.ws.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "peer-joined") {
-        if (this.isInitiator) {
-          this.createOffer();
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "peer-joined") {
+          if (this.isInitiator) {
+            // Small delay to ensure both sides are ready
+            setTimeout(() => this.createOffer(), 500);
+          }
+        } else if (data.type === "peer-left") {
+          this.onPeerLeft?.();
+        } else if (data.type === "signal") {
+          await this.handleSignal(data.payload);
         }
-      } else if (data.type === "peer-left") {
-        this.onPeerLeft?.();
-      } else if (data.type === "signal") {
-        await this.handleSignal(data.payload);
+      } catch (e) {
+        console.error("Signaling message error", e);
       }
+    };
+
+    this.ws.onerror = (err) => {
+      console.error("Signaling WebSocket error", err);
+    };
+
+    this.ws.onclose = () => {
+      if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
     };
   }
 
@@ -95,7 +119,15 @@ export class PeerConnection {
       }
     };
 
+    this.pc.oniceconnectionstatechange = () => {
+      console.log("ICE Connection State:", this.pc.iceConnectionState);
+      if (this.pc.iceConnectionState === 'failed') {
+        this.pc.restartIce();
+      }
+    };
+
     this.pc.onconnectionstatechange = () => {
+      console.log("Connection State:", this.pc.connectionState);
       this.onConnectionStateChange?.(this.pc.connectionState);
       if (this.pc.connectionState === 'connected') {
         this.startPing();
@@ -203,6 +235,7 @@ export class PeerConnection {
 
   public close() {
     this.stopPing();
+    if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
     if (this.inactivityTimeout) {
       window.clearTimeout(this.inactivityTimeout);
     }
