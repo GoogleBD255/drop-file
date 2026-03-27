@@ -2,18 +2,21 @@ import { getSocketUrl } from "./socket";
 
 export class PeerConnection {
   private pc: RTCPeerConnection;
-  private ws: WebSocket;
+  private ws: WebSocket | null = null;
   private roomId: string;
   private isInitiator: boolean;
   private iceCandidateQueue: RTCIceCandidate[] = [];
-  
-  public dataChannel?: RTCDataChannel;
+  private signalQueue: any[] = [];
+  private isClosing = false;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
   public onDataChannel?: (channel: RTCDataChannel) => void;
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   public onPeerLeft?: () => void;
   public sendMessage?: (message: any) => Promise<void>;
   public onDisconnect?: () => void;
   public onError?: (message: string) => void;
+  public onManualSignal?: (signal: string) => void;
 
   private pingInterval?: number;
   private wsPingInterval?: number;
@@ -35,6 +38,10 @@ export class PeerConnection {
         { urls: "stun:stun4.l.google.com:19302" },
         { urls: "stun:stun.services.mozilla.com" },
         { urls: "stun:stun.cloudflare.com:3478" },
+        { urls: "stun:stun.voipstunt.com" },
+        { urls: "stun:stun.ekiga.net" },
+        { urls: "stun:stun.ideasip.com" },
+        { urls: "stun:stun.schlund.de" },
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -49,13 +56,23 @@ export class PeerConnection {
           urls: "turn:openrelay.metered.ca:443?transport=tcp",
           username: "openrelayproject",
           credential: "openrelayproject"
+        },
+        {
+          urls: "turn:relay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turn:relay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject"
         }
       ],
       iceCandidatePoolSize: 10
     });
 
-    this.setupWebSocket();
     this.setupPeerConnection();
+    this.setupWebSocket();
     this.resetInactivityTimeout();
   }
 
@@ -75,12 +92,25 @@ export class PeerConnection {
   }
 
   private setupWebSocket() {
+    if (this.isClosing) return;
+
+    this.ws = new WebSocket(getSocketUrl());
+    
     this.ws.onopen = () => {
-      this.ws.send(JSON.stringify({ type: "join", room: this.roomId }));
+      console.log("Signaling WebSocket opened");
+      this.reconnectAttempts = 0;
+      this.ws?.send(JSON.stringify({ type: "join", room: this.roomId }));
       
+      // Send queued signals
+      while (this.signalQueue.length > 0) {
+        const payload = this.signalQueue.shift();
+        this.sendSignal(payload);
+      }
+
       // Keep signaling WebSocket alive
+      if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
       this.wsPingInterval = window.setInterval(() => {
-        if (this.ws.readyState === WebSocket.OPEN) {
+        if (this.ws?.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ type: "ws-ping" }));
         }
       }, 30000);
@@ -95,11 +125,13 @@ export class PeerConnection {
           return;
         }
         if (data.type === "peer-joined") {
+          console.log("Peer joined room");
           if (this.isInitiator) {
             // Small delay to ensure both sides are ready
             setTimeout(() => this.createOffer(), 500);
           }
         } else if (data.type === "peer-left") {
+          console.log("Peer left room");
           this.onPeerLeft?.();
         } else if (data.type === "signal") {
           await this.handleSignal(data.payload);
@@ -114,7 +146,15 @@ export class PeerConnection {
     };
 
     this.ws.onclose = () => {
+      console.log("Signaling WebSocket closed");
       if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
+      
+      if (!this.isClosing && this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
+        console.log(`Attempting signaling reconnect in ${delay}ms...`);
+        setTimeout(() => this.setupWebSocket(), delay);
+      }
     };
   }
 
@@ -122,6 +162,13 @@ export class PeerConnection {
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
         this.sendSignal({ candidate: event.candidate });
+      } else {
+        // ICE gathering complete - useful for manual signaling
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          if (this.pc.localDescription) {
+            this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
+          }
+        }
       }
     };
 
@@ -144,10 +191,8 @@ export class PeerConnection {
         this.onConnectionStateChange?.(state);
       } else if (state === 'failed') {
         console.log("Connection failed, attempting ICE restart...");
-        try {
-          this.pc.restartIce();
-        } catch (e) {
-          console.error("Failed to restart ICE", e);
+        if (this.isInitiator) {
+          this.createOffer(true);
         }
         this.onConnectionStateChange?.(state);
       } else if (state === 'closed') {
@@ -203,9 +248,34 @@ export class PeerConnection {
     }
   }
 
-  private async createOffer() {
+  public async createManualOffer() {
     try {
-      const offer = await this.pc.createOffer();
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      await this.pc.setLocalDescription(offer);
+      // We wait for ICE gathering to complete before sending the signal in manual mode
+      // or we can send it immediately if we don't care about trickle ICE
+      if (this.pc.iceGatheringState === 'complete') {
+        this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
+      }
+    } catch (err) {
+      console.error("Error creating manual offer", err);
+    }
+  }
+
+  public async setManualSignal(signalStr: string) {
+    try {
+      const signal = JSON.parse(signalStr);
+      await this.handleSignal(signal);
+    } catch (err) {
+      console.error("Error setting manual signal", err);
+      this.onError?.("Invalid connection string");
+    }
+  }
+
+  private async createOffer(iceRestart = false) {
+    try {
+      console.log(`Creating offer (iceRestart: ${iceRestart})`);
+      const offer = await this.pc.createOffer({ iceRestart });
       await this.pc.setLocalDescription(offer);
       this.sendSignal({ sdp: this.pc.localDescription });
     } catch (err) {
@@ -220,7 +290,16 @@ export class PeerConnection {
         if (signal.sdp.type === "offer") {
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
-          this.sendSignal({ sdp: this.pc.localDescription });
+          
+          if (this.ws.readyState === WebSocket.OPEN) {
+            this.sendSignal({ sdp: this.pc.localDescription });
+          } else {
+            // In manual mode, we wait for ICE gathering to complete
+            // which is handled in onicecandidate
+            if (this.pc.iceGatheringState === 'complete') {
+              this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
+            }
+          }
         }
         
         // Process queued candidates
@@ -244,22 +323,26 @@ export class PeerConnection {
   }
 
   private sendSignal(payload: any) {
-    if (this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({
         type: "signal",
         room: this.roomId,
         payload
       }));
+    } else {
+      console.log("Signaling WebSocket not open, queueing signal");
+      this.signalQueue.push(payload);
     }
   }
 
   public close() {
+    this.isClosing = true;
     this.stopPing();
     if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
     if (this.inactivityTimeout) {
       window.clearTimeout(this.inactivityTimeout);
     }
     this.pc.close();
-    this.ws.close();
+    this.ws?.close();
   }
 }

@@ -19,11 +19,158 @@ export function Receive() {
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'scanning' | 'connecting' | 'connected' | 'error'>('connecting');
   const [connectionDetail, setConnectionDetail] = useState<string>('Establishing secure WebRTC connection');
-  const [pin, setPin] = useState(['', '', '', '']);
-  const pinRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [localSdp, setLocalSdp] = useState('');
+  const [remoteSdp, setRemoteSdp] = useState('');
+  const [manualKey, setManualKey] = useState('');
+  const [isGatheringIce, setIsGatheringIce] = useState(false);
+  const [pin, setPin] = useState(['', '', '', '', '', '']);
+  const pinRefs = [
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null),
+    useRef<HTMLInputElement>(null)
+  ];
   
   const peerRef = useRef<PeerConnection | null>(null);
   const receiversRef = useRef<Map<number, FileReceiver>>(new Map());
+
+  const setupDataChannel = (peer: PeerConnection, channel: RTCDataChannel, key?: string) => {
+    const sendMessage = async (message: any) => {
+      peer.resetActivity();
+      
+      if (channel.readyState !== 'open') {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
+          const check = () => {
+            if (channel.readyState === 'open') {
+              clearTimeout(timeout);
+              resolve(null);
+            } else if (channel.readyState === 'closed' || channel.readyState === 'closing') {
+              clearTimeout(timeout);
+              reject(new Error("Data channel closed"));
+            } else {
+              setTimeout(check, 500);
+            }
+          };
+          check();
+        });
+      }
+
+      if (key) {
+        const encrypted = await encryptText(JSON.stringify(message), key);
+        channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+      } else {
+        channel.send(JSON.stringify(message));
+      }
+    };
+
+    peer.sendMessage = sendMessage;
+
+    channel.onmessage = async (event) => {
+      peer.resetActivity();
+      if (typeof event.data === 'string') {
+        try {
+          let data = JSON.parse(event.data);
+          
+          if (data.type === 'ping') return; // Ignore ping messages
+
+          if (data.type === 'encrypted' && key) {
+            const decrypted = await decryptText(data.payload, key);
+            data = JSON.parse(decrypted);
+          }
+
+          if (data.type === 'metadata') {
+            const receiver = new FileReceiver(data, key);
+            const dbId = uuidv4();
+            
+            await addHistoryRecord({
+              id: dbId,
+              fileName: data.name,
+              fileSize: data.size,
+              fileType: data.fileType || '',
+              direction: 'received',
+              status: 'failed', // Default to failed until complete
+              timestamp: Date.now(),
+            });
+            
+            receiver.onProgress = (p, s) => {
+              peer.resetActivity();
+              setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, progress: p, speed: s } : f));
+            };
+            
+            receiver.onComplete = (file) => {
+              const url = URL.createObjectURL(file);
+              setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'completed', progress: 100, speed: 0, url } : f));
+              receiversRef.current.delete(data.fileId);
+              
+              updateHistoryRecord(dbId, { status: 'completed', blob: file });
+              toast.success(`File received: ${file.name}`);
+              
+              // Auto download
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = file.name;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            };
+
+            receiver.onError = (err) => {
+              console.error(err);
+              setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'error' } : f));
+              receiversRef.current.delete(data.fileId);
+              updateHistoryRecord(dbId, { status: 'failed' });
+              toast.error(`Error receiving file: ${data.name}. ${err}`);
+            };
+
+            receiversRef.current.set(data.fileId, receiver);
+            
+            setFiles(prev => [...prev, {
+              id: data.fileId,
+              dbId,
+              name: data.name,
+              size: data.size,
+              type: data.fileType,
+              progress: 0,
+              speed: 0,
+              status: 'transferring'
+            }]);
+          } else if (data.type === 'complete') {
+            receiversRef.current.get(data.fileId)?.finish();
+          } else if (data.type === 'cancel') {
+            const receiver = receiversRef.current.get(data.fileId);
+            if (receiver) {
+              receiver.cancel();
+              receiversRef.current.delete(data.fileId);
+            }
+            setFiles(prev => prev.map(f => {
+              if (f.id === data.fileId) {
+                if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
+                return { ...f, status: 'cancelled' };
+              }
+              return f;
+            }));
+          } else if (data.type === 'pause') {
+            setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
+          } else if (data.type === 'resume') {
+            setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
+          } else if (data.type === 'disconnect') {
+            handleManualDisconnect();
+          }
+        } catch (e) {
+          console.error("Error parsing message", e);
+        }
+      } else if (event.data instanceof ArrayBuffer) {
+        const view = new DataView(event.data);
+        const fileId = view.getUint32(0);
+        const chunk = event.data.slice(4);
+        receiversRef.current.get(fileId)?.receiveChunk(chunk);
+      }
+    };
+  };
 
   useEffect(() => {
     if (!roomId) {
@@ -33,7 +180,7 @@ export function Receive() {
 
     const initConnection = async () => {
       let key = location.hash.replace('#', '');
-      if (!key && roomId.length === 4) {
+      if (!key && roomId.length === 6) {
         key = await deriveKeyFromPin(roomId);
       }
       setEncryptionKey(key);
@@ -45,6 +192,11 @@ export function Receive() {
 
       peer.onError = (msg) => {
         toast.error(msg);
+      };
+
+      peer.onManualSignal = (signal) => {
+        setLocalSdp(signal);
+        setIsGatheringIce(false);
       };
 
       peer.onConnectionStateChange = (state) => {
@@ -66,138 +218,7 @@ export function Receive() {
       };
 
       peer.onDataChannel = (channel) => {
-        const sendMessage = async (message: any) => {
-          peer.resetActivity();
-          
-          if (channel.readyState !== 'open') {
-            await new Promise((resolve, reject) => {
-              const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
-              const check = () => {
-                if (channel.readyState === 'open') {
-                  clearTimeout(timeout);
-                  resolve(null);
-                } else if (channel.readyState === 'closed' || channel.readyState === 'closing') {
-                  clearTimeout(timeout);
-                  reject(new Error("Data channel closed"));
-                } else {
-                  setTimeout(check, 500);
-                }
-              };
-              check();
-            });
-          }
-
-          if (key) {
-            const encrypted = await encryptText(JSON.stringify(message), key);
-            channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
-          } else {
-            channel.send(JSON.stringify(message));
-          }
-        };
-
-        peerRef.current!.sendMessage = sendMessage;
-
-        channel.onmessage = async (event) => {
-          peer.resetActivity();
-          if (typeof event.data === 'string') {
-            try {
-              let data = JSON.parse(event.data);
-              
-              if (data.type === 'ping') return; // Ignore ping messages
-
-              if (data.type === 'encrypted' && key) {
-                const decrypted = await decryptText(data.payload, key);
-                data = JSON.parse(decrypted);
-              }
-
-              if (data.type === 'metadata') {
-                const receiver = new FileReceiver(data, key);
-                const dbId = uuidv4();
-                
-                await addHistoryRecord({
-                  id: dbId,
-                  fileName: data.name,
-                  fileSize: data.size,
-                  fileType: data.fileType || '',
-                  direction: 'received',
-                  status: 'failed', // Default to failed until complete
-                  timestamp: Date.now(),
-                });
-                
-                receiver.onProgress = (p, s) => {
-                  peerRef.current?.resetActivity();
-                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, progress: p, speed: s } : f));
-                };
-                
-                receiver.onComplete = (file) => {
-                  const url = URL.createObjectURL(file);
-                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'completed', progress: 100, speed: 0, url } : f));
-                  receiversRef.current.delete(data.fileId);
-                  
-                  updateHistoryRecord(dbId, { status: 'completed', blob: file });
-                  toast.success(`File received: ${file.name}`);
-                  
-                  // Auto download
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = file.name;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                };
-
-                receiver.onError = (err) => {
-                  console.error(err);
-                  setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'error' } : f));
-                  receiversRef.current.delete(data.fileId);
-                  updateHistoryRecord(dbId, { status: 'failed' });
-                  toast.error(`Error receiving file: ${data.name}. ${err}`);
-                };
-
-                receiversRef.current.set(data.fileId, receiver);
-                
-                setFiles(prev => [...prev, {
-                  id: data.fileId,
-                  dbId,
-                  name: data.name,
-                  size: data.size,
-                  type: data.fileType,
-                  progress: 0,
-                  speed: 0,
-                  status: 'transferring'
-                }]);
-              } else if (data.type === 'complete') {
-                receiversRef.current.get(data.fileId)?.finish();
-              } else if (data.type === 'cancel') {
-                const receiver = receiversRef.current.get(data.fileId);
-                if (receiver) {
-                  receiver.cancel();
-                  receiversRef.current.delete(data.fileId);
-                }
-                setFiles(prev => prev.map(f => {
-                  if (f.id === data.fileId) {
-                    if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
-                    return { ...f, status: 'cancelled' };
-                  }
-                  return f;
-                }));
-              } else if (data.type === 'pause') {
-                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
-              } else if (data.type === 'resume') {
-                setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
-              } else if (data.type === 'disconnect') {
-                handleManualDisconnect();
-              }
-            } catch (e) {
-              console.error("Error parsing message", e);
-            }
-          } else if (event.data instanceof ArrayBuffer) {
-            const view = new DataView(event.data);
-            const fileId = view.getUint32(0);
-            const chunk = event.data.slice(4);
-            receiversRef.current.get(fileId)?.receiveChunk(chunk);
-          }
-        };
+        setupDataChannel(peer, channel, key);
       };
 
       peer.onDisconnect = () => {
@@ -223,6 +244,51 @@ export function Receive() {
     };
   }, [roomId, location.hash]);
 
+  const handleManualConnect = async () => {
+    if (!remoteSdp) {
+      toast.error("Please paste the connection string from the sender");
+      return;
+    }
+    
+    // If we haven't initialized the peer yet (because we are in 'scanning' state)
+    if (!peerRef.current) {
+      const dummyRoomId = "manual-" + Date.now();
+      const peer = new PeerConnection(dummyRoomId, false);
+      peerRef.current = peer;
+      
+      peer.onError = (msg) => toast.error(msg);
+      peer.onManualSignal = (signal) => {
+        setLocalSdp(signal);
+        setIsGatheringIce(false);
+      };
+      
+      peer.onConnectionStateChange = (state) => {
+        console.log("Manual Receive Peer State:", state);
+        if (state === 'connected') {
+          setPeerConnected(true);
+          setStatus('connected');
+          toast.success('Connected to sender!');
+        } else if (state === 'failed') {
+          setStatus('error');
+        }
+      };
+
+      peer.onDataChannel = (channel) => {
+        setupDataChannel(peer, channel, manualKey || undefined);
+      };
+    }
+
+    try {
+      setIsGatheringIce(true);
+      setStatus('connecting');
+      setConnectionDetail('Processing sender string...');
+      await peerRef.current?.setManualSignal(remoteSdp);
+    } catch (e) {
+      toast.error("Invalid connection string");
+      setStatus('scanning');
+    }
+  };
+
   const handlePinChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
     
@@ -231,7 +297,7 @@ export function Receive() {
     setPin(newPin);
 
     // Auto-advance to next input
-    if (value && index < 3) {
+    if (value && index < 5) {
       pinRefs[index + 1].current?.focus();
     }
   };
@@ -247,10 +313,10 @@ export function Receive() {
 
   const handlePinSubmit = () => {
     const fullPin = pin.join('');
-    if (fullPin.length === 4) {
+    if (fullPin.length === 6) {
       navigate(`/receive/${fullPin}`);
     } else {
-      toast.error('Please enter a 4-digit code.');
+      toast.error('Please enter a 6-digit code.');
     }
   };
 
@@ -326,34 +392,109 @@ export function Receive() {
           <div className="flex flex-col items-center justify-center space-y-8">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Enter Connection Code</h2>
-              <p className="text-gray-500 dark:text-gray-400">Enter the 4-digit code displayed on the sender's screen</p>
+              <p className="text-gray-500 dark:text-gray-400">Enter the 6-digit code displayed on the sender's screen</p>
+            </div>
+
+            <div className="flex justify-center mb-2">
+              <div className="inline-flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
+                <button
+                  onClick={() => setIsManualMode(false)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${!isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                >
+                  Online (Code)
+                </button>
+                <button
+                  onClick={() => setIsManualMode(true)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                >
+                  Offline (Manual)
+                </button>
+              </div>
             </div>
             
-            <div className="w-full max-w-sm space-y-6">
-              <div className="flex justify-center space-x-4">
-                {pin.map((digit, index) => (
-                  <input
-                    key={index}
-                    ref={pinRefs[index]}
-                    type="text"
-                    inputMode="numeric"
-                    pattern="\d*"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handlePinChange(index, e.target.value)}
-                    onKeyDown={(e) => handlePinKeyDown(index, e)}
-                    className="w-16 h-20 text-center text-3xl font-bold bg-gray-50 dark:bg-gray-900/50 border-2 border-gray-200 dark:border-gray-700 rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white"
-                  />
-                ))}
+            {!isManualMode ? (
+              <div className="w-full max-w-md space-y-6">
+                <div className="flex justify-center space-x-2 sm:space-x-3">
+                  {pin.map((digit, index) => (
+                    <input
+                      key={index}
+                      ref={pinRefs[index]}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="\d*"
+                      maxLength={1}
+                      value={digit}
+                      onChange={(e) => handlePinChange(index, e.target.value)}
+                      onKeyDown={(e) => handlePinKeyDown(index, e)}
+                      className="w-10 h-14 sm:w-14 sm:h-20 text-center text-2xl sm:text-3xl font-bold bg-gray-50 dark:bg-gray-900/50 border-2 border-gray-200 dark:border-gray-700 rounded-xl sm:rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white"
+                    />
+                  ))}
+                </div>
+                <button
+                  onClick={handlePinSubmit}
+                  disabled={pin.join('').length !== 6}
+                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 text-lg"
+                >
+                  Connect
+                </button>
               </div>
-              <button
-                onClick={handlePinSubmit}
-                disabled={pin.join('').length !== 4}
-                className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 text-lg"
-              >
-                Connect
-              </button>
-            </div>
+            ) : (
+              <div className="w-full max-w-sm space-y-6">
+                <div className="text-left space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Optional: Encryption Key</label>
+                    <input
+                      type="text"
+                      value={manualKey}
+                      onChange={(e) => setManualKey(e.target.value)}
+                      placeholder="Enter a secret key (optional)"
+                      className="w-full p-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1 italic">Use the same key on both devices for encryption.</p>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 1: Paste Sender's String</label>
+                    <textarea
+                      value={remoteSdp}
+                      onChange={(e) => setRemoteSdp(e.target.value)}
+                      placeholder="Paste the connection string from the sender here..."
+                      className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                    <button
+                      onClick={handleManualConnect}
+                      disabled={!remoteSdp}
+                      className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20"
+                    >
+                      Process Sender String
+                    </button>
+                  </div>
+
+                  {localSdp && (
+                    <div className="animate-in fade-in slide-in-from-top-4 duration-300">
+                      <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 2: Your Answer String</label>
+                      <div className="space-y-2">
+                        <textarea
+                          readOnly
+                          value={localSdp}
+                          className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none"
+                        />
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(localSdp);
+                            toast.success('Copied to clipboard');
+                          }}
+                          className="w-full py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-xs font-bold transition-all"
+                        >
+                          Copy Answer String
+                        </button>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center italic">Give this answer string back to the sender to complete the connection.</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

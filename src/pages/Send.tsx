@@ -17,14 +17,93 @@ export function Send() {
   const [files, setFiles] = useState<FileQueueItem[]>([]);
   const [status, setStatus] = useState<'waiting' | 'connected' | 'error'>('waiting');
   const [connectionDetail, setConnectionDetail] = useState<string>('Waiting for receiver...');
+  const [isManualMode, setIsManualMode] = useState(false);
+  const [localSdp, setLocalSdp] = useState('');
+  const [remoteSdp, setRemoteSdp] = useState('');
+  const [manualKey, setManualKey] = useState('');
+  const [isGatheringIce, setIsGatheringIce] = useState(false);
   
   const peerRef = useRef<PeerConnection | null>(null);
   const sendersRef = useRef<Map<number, FileSender>>(new Map());
   const nextFileId = useRef(1);
 
+  const setupDataChannel = (peer: PeerConnection, channel: RTCDataChannel, key?: string) => {
+    const sendMessage = async (message: any) => {
+      peer.resetActivity();
+      
+      if (channel.readyState !== 'open') {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
+          const check = () => {
+            if (channel.readyState === 'open') {
+              clearTimeout(timeout);
+              resolve(null);
+            } else if (channel.readyState === 'closed' || channel.readyState === 'closing') {
+              clearTimeout(timeout);
+              reject(new Error("Data channel closed"));
+            } else {
+              setTimeout(check, 500);
+            }
+          };
+          check();
+        });
+      }
+
+      if (key) {
+        const encrypted = await encryptText(JSON.stringify(message), key);
+        channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
+      } else {
+        channel.send(JSON.stringify(message));
+      }
+    };
+
+    peer.sendMessage = sendMessage;
+
+    channel.onmessage = async (event) => {
+      peer.resetActivity();
+      if (typeof event.data === 'string') {
+        try {
+          let data = JSON.parse(event.data);
+          
+          if (data.type === 'ping') return; // Ignore ping messages
+
+          if (data.type === 'encrypted' && key) {
+            const decrypted = await decryptText(data.payload, key);
+            data = JSON.parse(decrypted);
+          }
+
+          if (data.type === 'cancel') {
+            const sender = sendersRef.current.get(data.fileId);
+            if (sender) {
+              sender.cancel();
+              sendersRef.current.delete(data.fileId);
+            }
+            setFiles(prev => prev.map(f => {
+              if (f.id === data.fileId) {
+                if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
+                return { ...f, status: 'cancelled' };
+              }
+              return f;
+            }));
+          } else if (data.type === 'pause') {
+            sendersRef.current.get(data.fileId)?.pause();
+            setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
+          } else if (data.type === 'resume') {
+            sendersRef.current.get(data.fileId)?.resume();
+            setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
+          } else if (data.type === 'disconnect') {
+            handleManualDisconnect();
+          }
+        } catch (e) {
+          console.error("Error parsing message", e);
+        }
+      }
+    };
+  };
+
   useEffect(() => {
     const initRoom = async () => {
-      const newRoomId = Math.floor(1000 + Math.random() * 9000).toString();
+      const newRoomId = Math.floor(100000 + Math.random() * 899999).toString();
       const newKey = await deriveKeyFromPin(newRoomId);
       setRoomId(newRoomId);
       setEncryptionKey(newKey);
@@ -34,6 +113,11 @@ export function Send() {
 
       peer.onError = (msg) => {
         toast.error(msg);
+      };
+
+      peer.onManualSignal = (signal) => {
+        setLocalSdp(signal);
+        setIsGatheringIce(false);
       };
 
       peer.onConnectionStateChange = (state) => {
@@ -47,83 +131,7 @@ export function Send() {
           
           // Setup message listener for the data channel
           if (peer.dataChannel) {
-            const sendMessage = async (message: any) => {
-              peer.resetActivity();
-              
-              if (peer.dataChannel?.readyState !== 'open') {
-                await new Promise((resolve, reject) => {
-                  const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
-                  const check = () => {
-                    if (peer.dataChannel?.readyState === 'open') {
-                      clearTimeout(timeout);
-                      resolve(null);
-                    } else if (peer.dataChannel?.readyState === 'closed' || peer.dataChannel?.readyState === 'closing') {
-                      clearTimeout(timeout);
-                      reject(new Error("Data channel closed"));
-                    } else {
-                      setTimeout(check, 500);
-                    }
-                  };
-                  check();
-                });
-              }
-
-              if (newKey) {
-                const encrypted = await encryptText(JSON.stringify(message), newKey);
-                peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
-              } else {
-                peer.dataChannel!.send(JSON.stringify(message));
-              }
-            };
-
-            peer.sendMessage = sendMessage;
-
-            peer.dataChannel.onmessage = async (event) => {
-              peer.resetActivity();
-              if (typeof event.data === 'string') {
-                try {
-                  let data = JSON.parse(event.data);
-                  
-                  if (data.type === 'ping') return; // Ignore ping messages
-
-                  if (data.type === 'encrypted' && newKey) {
-                    const decrypted = await decryptText(data.payload, newKey);
-                    data = JSON.parse(decrypted);
-                  }
-
-                  if (data.type === 'cancel') {
-                    const sender = sendersRef.current.get(data.fileId);
-                    if (sender) {
-                      sender.cancel();
-                      sendersRef.current.delete(data.fileId);
-                    }
-                    setFiles(prev => prev.map(f => {
-                      if (f.id === data.fileId) {
-                        if (f.dbId) updateHistoryRecord(f.dbId, { status: 'cancelled' });
-                        return { ...f, status: 'cancelled' };
-                      }
-                      return f;
-                    }));
-                  } else if (data.type === 'pause') {
-                    const sender = sendersRef.current.get(data.fileId);
-                    if (sender) {
-                      sender.pause();
-                      setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'paused', speed: 0 } : f));
-                    }
-                  } else if (data.type === 'resume') {
-                    const sender = sendersRef.current.get(data.fileId);
-                    if (sender) {
-                      sender.resume();
-                      setFiles(prev => prev.map(f => f.id === data.fileId ? { ...f, status: 'transferring' } : f));
-                    }
-                  } else if (data.type === 'disconnect') {
-                    handleManualDisconnect();
-                  }
-                } catch (e) {
-                  console.error("Error parsing message", e);
-                }
-              }
-            };
+            setupDataChannel(peer, peer.dataChannel, newKey);
           }
         } else if (state === 'disconnected') {
           setConnectionDetail('Connection unstable, attempting to reconnect...');
@@ -151,6 +159,29 @@ export function Send() {
       }
     };
   }, []);
+
+  const handleManualConnect = async () => {
+    if (!remoteSdp) {
+      toast.error("Please paste the answer from the receiver");
+      return;
+    }
+    
+    // Update setupDataChannel with manual key if provided
+    if (peerRef.current?.dataChannel) {
+      setupDataChannel(peerRef.current, peerRef.current.dataChannel, manualKey || undefined);
+    }
+
+    try {
+      await peerRef.current?.setManualSignal(remoteSdp);
+    } catch (e) {
+      toast.error("Invalid answer string");
+    }
+  };
+
+  const startManualGathering = () => {
+    setIsGatheringIce(true);
+    peerRef.current?.createManualOffer();
+  };
 
   const handleFilesSelect = (selectedFiles: File[]) => {
     peerRef.current?.resetActivity();
@@ -312,15 +343,96 @@ export function Send() {
         <div className="flex flex-col items-center space-y-6 md:sticky md:top-24">
           <div className="text-center w-full">
             <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">1. Share Connection Code</h2>
-            {roomId ? (
-              <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto">
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Enter this 4-digit code on the receiving device:</p>
-                <div className="text-6xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.2em] py-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
-                  {roomId}
+            
+            <div className="flex justify-center mb-6">
+              <div className="inline-flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
+                <button
+                  onClick={() => setIsManualMode(false)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${!isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                >
+                  Online (Code)
+                </button>
+                <button
+                  onClick={() => setIsManualMode(true)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                >
+                  Offline (Manual)
+                </button>
+              </div>
+            </div>
+
+            {!isManualMode ? (
+              roomId ? (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Enter this 4-digit code on the receiving device:</p>
+                  <div className="text-6xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.2em] py-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+                    {roomId}
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full max-w-sm h-[200px] bg-gray-100 dark:bg-gray-800 animate-pulse rounded-2xl mx-auto"></div>
+              )
+            ) : (
+              <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto space-y-4">
+                <div className="text-left">
+                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Optional: Encryption Key</label>
+                  <input
+                    type="text"
+                    value={manualKey}
+                    onChange={(e) => setManualKey(e.target.value)}
+                    placeholder="Enter a secret key (optional)"
+                    className="w-full p-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                  <p className="text-[10px] text-gray-500 mt-1 italic">Use the same key on both devices for encryption.</p>
+                </div>
+
+                <div className="text-left">
+                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 1: Your Connection String</label>
+                  {!localSdp ? (
+                    <button
+                      onClick={startManualGathering}
+                      disabled={isGatheringIce}
+                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20"
+                    >
+                      {isGatheringIce ? 'Gathering Connection Data...' : 'Generate Connection String'}
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <textarea
+                        readOnly
+                        value={localSdp}
+                        className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none"
+                      />
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(localSdp);
+                          toast.success('Copied to clipboard');
+                        }}
+                        className="w-full py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-xs font-bold transition-all"
+                      >
+                        Copy String
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-left">
+                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 2: Paste Receiver's Answer</label>
+                  <textarea
+                    value={remoteSdp}
+                    onChange={(e) => setRemoteSdp(e.target.value)}
+                    placeholder="Paste the answer string from the receiver here..."
+                    className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  />
+                  <button
+                    onClick={handleManualConnect}
+                    disabled={!remoteSdp || peerConnected}
+                    className="w-full mt-2 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20"
+                  >
+                    Connect Manually
+                  </button>
                 </div>
               </div>
-            ) : (
-              <div className="w-full max-w-sm h-[200px] bg-gray-100 dark:bg-gray-800 animate-pulse rounded-2xl mx-auto"></div>
             )}
           </div>
           
