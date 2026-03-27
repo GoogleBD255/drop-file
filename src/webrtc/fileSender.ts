@@ -5,9 +5,8 @@ export class FileSender {
   private file: File;
   public fileId: number;
   private encryptionKey?: string;
-  private chunkSize = 64 * 1024; // 64KB
+  private chunkSize = 256 * 1024; // 256KB
   private offset = 0;
-  private fileReader = new FileReader();
   private isCancelled = false;
   private isPaused = false;
   private isReading = false;
@@ -26,33 +25,6 @@ export class FileSender {
     this.file = file;
     this.fileId = fileId;
     this.encryptionKey = encryptionKey;
-
-    this.fileReader.onerror = () => {
-      if (!this.isCancelled) {
-        this.onError?.(new Error("Error reading file"));
-        this.cancel();
-      }
-    };
-
-    this.fileReader.onload = (e) => {
-      this.isReading = false;
-      if (this.isCancelled) return;
-      if (!e.target?.result) return;
-      const buffer = e.target.result as ArrayBuffer;
-      
-      // Handle backpressure
-      if (this.channel.bufferedAmount > this.channel.bufferedAmountLowThreshold) {
-        this.isWaitingForBuffer = true;
-        const listener = () => {
-          this.channel.removeEventListener("bufferedamountlow", listener);
-          this.isWaitingForBuffer = false;
-          if (!this.isCancelled) this.sendBuffer(buffer);
-        };
-        this.channel.addEventListener("bufferedamountlow", listener);
-      } else {
-        this.sendBuffer(buffer);
-      }
-    };
   }
 
   private async sendMessage(message: any) {
@@ -65,9 +37,8 @@ export class FileSender {
   }
 
   public async start() {
-    this.channel.bufferedAmountLowThreshold = 128 * 1024; // 128KB
+    this.channel.bufferedAmountLowThreshold = 1024 * 1024; // 1MB
     
-    // Send metadata first
     const metadata = {
       type: "metadata",
       fileId: this.fileId,
@@ -81,10 +52,9 @@ export class FileSender {
     this.startTime = Date.now();
     this.lastReportTime = this.startTime;
     
-    // Wait for receiver to acknowledge metadata before sending chunks
-    setTimeout(() => {
-      if (!this.isCancelled && !this.isPaused) this.readNextChunk();
-    }, 100);
+    if (!this.isCancelled && !this.isPaused) {
+      this.readNextChunk();
+    }
   }
 
   public pause() {
@@ -103,7 +73,6 @@ export class FileSender {
 
   public cancel() {
     this.isCancelled = true;
-    this.fileReader.abort();
     this.sendMessage({ type: "cancel", fileId: this.fileId }).catch(() => {});
   }
 
@@ -115,11 +84,9 @@ export class FileSender {
         dataToSend = await encryptChunk(buffer, this.encryptionKey);
       }
 
-      const header = new ArrayBuffer(4);
-      new DataView(header).setUint32(0, this.fileId);
-      
       const combined = new Uint8Array(4 + dataToSend.byteLength);
-      combined.set(new Uint8Array(header), 0);
+      const view = new DataView(combined.buffer);
+      view.setUint32(0, this.fileId);
       combined.set(new Uint8Array(dataToSend), 4);
       
       this.channel.send(combined.buffer);
@@ -129,7 +96,17 @@ export class FileSender {
 
       if (this.offset < this.file.size) {
         if (!this.isPaused) {
-          this.readNextChunk();
+          if (this.channel.bufferedAmount > this.channel.bufferedAmountLowThreshold) {
+            this.isWaitingForBuffer = true;
+            const listener = () => {
+              this.channel.removeEventListener("bufferedamountlow", listener);
+              this.isWaitingForBuffer = false;
+              if (!this.isCancelled && !this.isPaused) this.readNextChunk();
+            };
+            this.channel.addEventListener("bufferedamountlow", listener);
+          } else {
+            this.readNextChunk();
+          }
         }
       } else {
         await this.sendMessage({ type: "complete", fileId: this.fileId });
@@ -140,11 +117,23 @@ export class FileSender {
     }
   }
 
-  private readNextChunk() {
+  private async readNextChunk() {
     if (this.isCancelled || this.isPaused) return;
     this.isReading = true;
-    const slice = this.file.slice(this.offset, this.offset + this.chunkSize);
-    this.fileReader.readAsArrayBuffer(slice);
+    try {
+      const slice = this.file.slice(this.offset, this.offset + this.chunkSize);
+      const buffer = await slice.arrayBuffer();
+      this.isReading = false;
+      if (!this.isCancelled) {
+        this.sendBuffer(buffer);
+      }
+    } catch (err) {
+      this.isReading = false;
+      if (!this.isCancelled) {
+        this.onError?.(err as Error);
+        this.cancel();
+      }
+    }
   }
 
   private reportProgress() {
@@ -152,9 +141,9 @@ export class FileSender {
     if (now - this.lastReportTime > 500 || this.offset === this.file.size) {
       const progress = this.file.size === 0 ? 100 : (this.offset / this.file.size) * 100;
       
-      const timeDiff = (now - this.lastReportTime) / 1000; // seconds
+      const timeDiff = (now - this.lastReportTime) / 1000;
       const bytesDiff = this.offset - this.lastReportOffset;
-      const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0; // bytes per second
+      const speed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
       
       this.onProgress?.(progress, speed);
       

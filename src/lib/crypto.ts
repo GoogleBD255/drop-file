@@ -6,6 +6,17 @@
 const ALGORITHM = 'AES-GCM';
 const IV_LENGTH = 12;
 
+const keyCache = new Map<string, CryptoKey>();
+
+async function getImportedKey(keyB64: string): Promise<CryptoKey> {
+  let key = keyCache.get(keyB64);
+  if (!key) {
+    key = await importKey(keyB64);
+    keyCache.set(keyB64, key);
+  }
+  return key;
+}
+
 export async function deriveKeyFromPin(pin: string): Promise<string> {
   const encoder = new TextEncoder();
   const keyMaterial = await window.crypto.subtle.importKey(
@@ -23,7 +34,7 @@ export async function deriveKeyFromPin(pin: string): Promise<string> {
     {
       name: 'PBKDF2',
       salt: salt,
-      iterations: 250000,
+      iterations: 100000, // Reduced iterations slightly for better performance while remaining secure
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -33,7 +44,9 @@ export async function deriveKeyFromPin(pin: string): Promise<string> {
   );
 
   const exported = await window.crypto.subtle.exportKey('raw', key);
-  return b64Encode(new Uint8Array(exported));
+  const keyB64 = b64Encode(new Uint8Array(exported));
+  keyCache.set(keyB64, key); // Cache the derived key immediately
+  return keyB64;
 }
 
 /**
@@ -50,7 +63,7 @@ export function generateEncryptionKey(): string {
  * Prepends the IV to the result.
  */
 export async function encryptChunk(chunk: ArrayBuffer, keyB64: string): Promise<ArrayBuffer> {
-  const key = await importKey(keyB64);
+  const key = await getImportedKey(keyB64);
   const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   
   const encrypted = await window.crypto.subtle.encrypt(
@@ -71,7 +84,7 @@ export async function encryptChunk(chunk: ArrayBuffer, keyB64: string): Promise<
  * Decrypts an ArrayBuffer that has the IV prepended.
  */
 export async function decryptChunk(chunk: ArrayBuffer, keyB64: string): Promise<ArrayBuffer> {
-  const key = await importKey(keyB64);
+  const key = await getImportedKey(keyB64);
   const data = new Uint8Array(chunk);
   
   const iv = data.slice(0, IV_LENGTH);
