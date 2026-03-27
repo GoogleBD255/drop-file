@@ -27,13 +27,6 @@ async function startServer() {
           if (!rooms.has(room)) {
             rooms.set(room, new Set());
           }
-          
-          // Prevent more than 2 peers in a room
-          if (rooms.get(room)!.size >= 2) {
-            ws.send(JSON.stringify({ type: "error", message: "Room is full. Please try a different code." }));
-            return;
-          }
-
           rooms.get(room)!.add(ws);
           
           // Notify others in the room
@@ -47,8 +40,6 @@ async function startServer() {
           if (rooms.get(room)!.size > 1) {
             ws.send(JSON.stringify({ type: "peer-joined" }));
           }
-        } else if (type === "ws-ping") {
-          ws.send(JSON.stringify({ type: "ws-pong" }));
         } else if (type === "signal") {
           // Broadcast signal to others in the room
           const targetRoom = room || currentRoom;
