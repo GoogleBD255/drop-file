@@ -78,6 +78,32 @@ export class FileSender {
 
   private async sendBuffer(buffer: ArrayBuffer) {
     if (this.isCancelled) return;
+    
+    // Wait for channel to be open if it's not
+    if (this.channel.readyState !== 'open') {
+      console.log("Channel not open, waiting for recovery...");
+      try {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 30000);
+          const check = () => {
+            if (this.channel.readyState === 'open') {
+              clearTimeout(timeout);
+              resolve(null);
+            } else if (this.channel.readyState === 'closed' || this.channel.readyState === 'closing') {
+              clearTimeout(timeout);
+              reject(new Error("Data channel closed"));
+            } else {
+              setTimeout(check, 500);
+            }
+          };
+          check();
+        });
+      } catch (e) {
+        this.onError?.(e as Error);
+        return;
+      }
+    }
+
     try {
       let dataToSend = buffer;
       if (this.encryptionKey) {

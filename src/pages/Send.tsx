@@ -32,6 +32,10 @@ export function Send() {
       const peer = new PeerConnection(newRoomId, true);
       peerRef.current = peer;
 
+      peer.onError = (msg) => {
+        toast.error(msg);
+      };
+
       peer.onConnectionStateChange = (state) => {
         console.log("Send Peer State:", state);
         if (state === 'connecting') {
@@ -45,6 +49,25 @@ export function Send() {
           if (peer.dataChannel) {
             const sendMessage = async (message: any) => {
               peer.resetActivity();
+              
+              if (peer.dataChannel?.readyState !== 'open') {
+                await new Promise((resolve, reject) => {
+                  const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
+                  const check = () => {
+                    if (peer.dataChannel?.readyState === 'open') {
+                      clearTimeout(timeout);
+                      resolve(null);
+                    } else if (peer.dataChannel?.readyState === 'closed' || peer.dataChannel?.readyState === 'closing') {
+                      clearTimeout(timeout);
+                      reject(new Error("Data channel closed"));
+                    } else {
+                      setTimeout(check, 500);
+                    }
+                  };
+                  check();
+                });
+              }
+
               if (newKey) {
                 const encrypted = await encryptText(JSON.stringify(message), newKey);
                 peer.dataChannel!.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
@@ -102,11 +125,14 @@ export function Send() {
               }
             };
           }
-        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        } else if (state === 'disconnected') {
+          setConnectionDetail('Connection unstable, attempting to reconnect...');
+          toast.loading('Reconnecting...', { id: 'reconnect-toast' });
+        } else if (state === 'failed' || state === 'closed') {
           setPeerConnected(false);
           setStatus('error');
           setConnectionDetail('Connection failed');
-          toast.error('Connection to receiver lost.');
+          toast.error('Connection failed.', { id: 'reconnect-toast' });
         }
       };
 

@@ -13,11 +13,12 @@ export class PeerConnection {
   public onPeerLeft?: () => void;
   public sendMessage?: (message: any) => Promise<void>;
   public onDisconnect?: () => void;
+  public onError?: (message: string) => void;
 
   private pingInterval?: number;
   private wsPingInterval?: number;
   private inactivityTimeout?: number;
-  private readonly INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 minutes
+  private readonly INACTIVITY_LIMIT = 10 * 60 * 1000; // 10 minutes
 
   constructor(roomId: string, isInitiator: boolean) {
     this.roomId = roomId;
@@ -32,8 +33,8 @@ export class PeerConnection {
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
-        // Use a more reliable set of TURN servers if possible, 
-        // but for now, we'll keep these and add better error handling.
+        { urls: "stun:stun.services.mozilla.com" },
+        { urls: "stun:stun.cloudflare.com:3478" },
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -88,6 +89,11 @@ export class PeerConnection {
     this.ws.onmessage = async (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === "error") {
+          this.onError?.(data.message);
+          this.onConnectionStateChange?.('failed');
+          return;
+        }
         if (data.type === "peer-joined") {
           if (this.isInitiator) {
             // Small delay to ensure both sides are ready
@@ -128,11 +134,25 @@ export class PeerConnection {
 
     this.pc.onconnectionstatechange = () => {
       console.log("Connection State:", this.pc.connectionState);
-      this.onConnectionStateChange?.(this.pc.connectionState);
-      if (this.pc.connectionState === 'connected') {
+      const state = this.pc.connectionState;
+      
+      if (state === 'connected') {
         this.startPing();
-      } else if (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed' || this.pc.connectionState === 'closed') {
+        this.onConnectionStateChange?.(state);
+      } else if (state === 'disconnected') {
+        console.log("Connection disconnected, waiting for potential recovery...");
+        this.onConnectionStateChange?.(state);
+      } else if (state === 'failed') {
+        console.log("Connection failed, attempting ICE restart...");
+        try {
+          this.pc.restartIce();
+        } catch (e) {
+          console.error("Failed to restart ICE", e);
+        }
+        this.onConnectionStateChange?.(state);
+      } else if (state === 'closed') {
         this.stopPing();
+        this.onConnectionStateChange?.(state);
       }
     };
 

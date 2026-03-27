@@ -43,6 +43,10 @@ export function Receive() {
       const peer = new PeerConnection(roomId, false);
       peerRef.current = peer;
 
+      peer.onError = (msg) => {
+        toast.error(msg);
+      };
+
       peer.onConnectionStateChange = (state) => {
         console.log("Receive Peer State:", state);
         if (state === 'connecting') {
@@ -51,16 +55,38 @@ export function Receive() {
           setPeerConnected(true);
           setStatus('connected');
           toast.success('Connected to sender!');
-        } else if (state === 'disconnected' || state === 'failed') {
+        } else if (state === 'disconnected') {
+          setConnectionDetail('Connection unstable, attempting to reconnect...');
+          toast.loading('Reconnecting...', { id: 'reconnect-toast' });
+        } else if (state === 'failed') {
           setPeerConnected(false);
           setStatus('error');
-          toast.error('Connection to sender lost.');
+          toast.error('Connection failed.', { id: 'reconnect-toast' });
         }
       };
 
       peer.onDataChannel = (channel) => {
         const sendMessage = async (message: any) => {
           peer.resetActivity();
+          
+          if (channel.readyState !== 'open') {
+            await new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error("Timeout waiting for data channel")), 10000);
+              const check = () => {
+                if (channel.readyState === 'open') {
+                  clearTimeout(timeout);
+                  resolve(null);
+                } else if (channel.readyState === 'closed' || channel.readyState === 'closing') {
+                  clearTimeout(timeout);
+                  reject(new Error("Data channel closed"));
+                } else {
+                  setTimeout(check, 500);
+                }
+              };
+              check();
+            });
+          }
+
           if (key) {
             const encrypted = await encryptText(JSON.stringify(message), key);
             channel.send(JSON.stringify({ type: 'encrypted', payload: encrypted }));
