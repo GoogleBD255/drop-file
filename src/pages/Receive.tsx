@@ -37,6 +37,7 @@ export function Receive() {
     useRef<HTMLInputElement>(null)
   ];
   
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const peerRef = useRef<PeerConnection | null>(null);
   const receiversRef = useRef<Map<number, FileReceiver>>(new Map());
 
@@ -373,7 +374,9 @@ export function Receive() {
   };
 
   const handleManualDisconnect = () => {
-    if (peerRef.current) {
+    if (peerRef.current && !isDisconnecting) {
+      setIsDisconnecting(true);
+      console.log("Initiating manual disconnect...");
       // Try to notify the other peer before closing
       peerRef.current.sendMessage?.({ type: 'disconnect' }).catch(() => {});
       setTimeout(() => {
@@ -383,7 +386,7 @@ export function Receive() {
         toast.success('Disconnected successfully');
         // Reload page to reset state completely
         window.location.href = '/receive';
-      }, 100);
+      }, 200); // Slightly longer delay to ensure message is sent
     }
   };
 

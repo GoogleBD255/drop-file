@@ -5,7 +5,7 @@ export class FileSender {
   private file: File;
   public fileId: number;
   private encryptionKey?: string;
-  private chunkSize = 256 * 1024; // 256KB
+  private chunkSize = 64 * 1024; // 64KB - More robust for WebRTC data channels
   private offset = 0;
   private isCancelled = false;
   private isPaused = false;
@@ -25,6 +25,7 @@ export class FileSender {
     this.file = file;
     this.fileId = fileId;
     this.encryptionKey = encryptionKey;
+    console.log(`FileSender initialized for ${file.name} (${file.size} bytes), ID: ${fileId}`);
   }
 
   private async sendMessage(message: any) {

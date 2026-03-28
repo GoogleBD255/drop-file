@@ -29,19 +29,24 @@ export class FileReceiver {
     this.encryptionKey = encryptionKey;
     this.startTime = Date.now();
     this.lastReportTime = this.startTime;
+    console.log(`FileReceiver initialized for ${metadata.name} (${metadata.size} bytes), ID: ${metadata.fileId}`);
     this.initStorage();
   }
 
   private async initStorage() {
     try {
+      if (!navigator.storage || !navigator.storage.getDirectory) {
+        throw new Error("OPFS not supported in this browser");
+      }
       const root = await navigator.storage.getDirectory();
       // Sanitize filename to avoid issues with special characters
       const safeName = this.metadata.name.replace(/[^a-z0-9._-]/gi, '_');
       this.fileHandle = await root.getFileHandle(`transfer_${Date.now()}_${safeName}`, { create: true });
       this.writable = await (this.fileHandle as any).createWritable();
       this.useOPFS = true;
+      console.log("OPFS storage initialized successfully");
     } catch (e) {
-      console.warn("OPFS not available, falling back to memory", e);
+      console.warn("OPFS not available, falling back to memory. Large files might fail.", e);
       this.useOPFS = false;
     } finally {
       this.isInitializing = false;
