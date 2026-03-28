@@ -25,11 +25,11 @@ function Home() {
   }, []);
 
   return (
-    <div className="max-w-4xl mx-auto p-6 text-center pt-20">
-      <h1 className="text-5xl font-bold text-gray-900 dark:text-white tracking-tight mb-6">
+    <div className="max-w-4xl mx-auto px-4 py-12 sm:px-6 lg:px-8 text-center sm:pt-20">
+      <h1 className="text-4xl sm:text-6xl font-bold text-gray-900 dark:text-white tracking-tight mb-4 sm:mb-6">
         Fast <span className="text-blue-600">Share</span>
       </h1>
-      <p className="text-xl text-gray-500 dark:text-gray-400 mb-6 max-w-2xl mx-auto">
+      <p className="text-lg sm:text-xl text-gray-500 dark:text-gray-400 mb-8 max-w-2xl mx-auto leading-relaxed">
         Lightning-fast, secure, peer-to-peer file transfer directly in your browser. No limits, no servers, no hassle.
       </p>
       <div className="flex justify-center mb-12">
@@ -49,26 +49,26 @@ function Home() {
         </div>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-6 max-w-2xl mx-auto">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 max-w-2xl mx-auto">
         <Link 
           to="/send" 
-          className="group flex flex-col items-center p-8 bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md hover:border-blue-200 dark:hover:border-blue-800 transition-all"
+          className="group flex flex-col items-center p-6 sm:p-8 bg-white dark:bg-gray-800 rounded-2xl sm:rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md hover:border-blue-200 dark:hover:border-blue-800 transition-all"
         >
-          <div className="w-16 h-16 bg-blue-50 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-            <SendIcon className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-50 dark:bg-blue-900/30 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <SendIcon className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 dark:text-blue-400" />
           </div>
-          <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Send Files</h2>
+          <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 dark:text-white mb-2">Send Files</h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm">Generate a 4-digit code and send files to another device</p>
         </Link>
 
         <Link 
           to="/receive" 
-          className="group flex flex-col items-center p-8 bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md hover:border-green-200 dark:hover:border-green-800 transition-all"
+          className="group flex flex-col items-center p-6 sm:p-8 bg-white dark:bg-gray-800 rounded-2xl sm:rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md hover:border-green-200 dark:hover:border-green-800 transition-all"
         >
-          <div className="w-16 h-16 bg-green-50 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 bg-green-50 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
             <Download className="w-8 h-8 text-green-600 dark:text-green-400" />
           </div>
-          <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Receive Files</h2>
+          <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 dark:text-white mb-2">Receive Files</h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm">Enter a 4-digit code to receive files from another device</p>
         </Link>
       </div>
@@ -146,10 +146,11 @@ export default function App() {
                 {showInstallBtn && (
                   <button
                     onClick={handleInstallClick}
-                    className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-blue-500/20"
+                    className="flex items-center space-x-1 sm:space-x-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs sm:text-sm font-semibold transition-all shadow-lg shadow-blue-500/20"
                   >
                     <Smartphone className="w-4 h-4" />
-                    <span>Install App</span>
+                    <span className="sm:hidden">Install</span>
+                    <span className="hidden sm:inline">Install App</span>
                   </button>
                 )}
               </div>

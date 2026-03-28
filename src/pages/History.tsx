@@ -113,17 +113,17 @@ export function History() {
             const isCompleted = record.status === 'completed';
 
             return (
-              <div key={record.id} className="flex items-center p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 mr-4 ${bg}`}>
-                  <Icon className={`w-6 h-6 ${color}`} />
+              <div key={record.id} className="flex items-center p-3 sm:p-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow">
+                <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center flex-shrink-0 mr-3 sm:mr-4 ${bg}`}>
+                  <Icon className={`w-5 h-5 sm:w-6 sm:h-6 ${color}`} />
                 </div>
-
-                <div className="flex-1 min-w-0 mr-4">
-                  <div className="flex items-center space-x-2 mb-1">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate" title={record.fileName}>
+ 
+                <div className="flex-1 min-w-0 mr-2 sm:mr-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-2 mb-1">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate max-w-[150px] sm:max-w-none" title={record.fileName}>
                       {record.fileName}
                     </h3>
-                    <span className={`px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full ${
+                    <span className={`inline-block w-fit px-2 py-0.5 text-[9px] sm:text-[10px] font-medium uppercase tracking-wider rounded-full mt-1 sm:mt-0 ${
                       isReceived 
                         ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                         : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
@@ -132,11 +132,11 @@ export function History() {
                     </span>
                   </div>
                   
-                  <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 space-x-3">
+                  <div className="flex flex-wrap items-center text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 gap-x-2 sm:gap-x-3">
                     <span>{formatSize(record.fileSize)}</span>
-                    <span>•</span>
+                    <span className="hidden sm:inline">•</span>
                     <span>{formatDate(record.timestamp)}</span>
-                    <span>•</span>
+                    <span className="hidden sm:inline">•</span>
                     <span className="flex items-center space-x-1">
                       {record.status === 'completed' && <CheckCircle className="w-3 h-3 text-green-500" />}
                       {record.status === 'failed' && <AlertCircle className="w-3 h-3 text-red-500" />}

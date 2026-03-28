@@ -3,8 +3,10 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { PeerConnection } from '../webrtc/peer';
 import { FileReceiver } from '../webrtc/fileReceiver';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
-import { Download, AlertCircle, RefreshCw, KeyRound, Lock } from 'lucide-react';
+import { Download, AlertCircle, RefreshCw, KeyRound, Lock, QrCode, Scan, ArrowLeft, File, CheckCircle } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { QRCodeSVG } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
 import { addHistoryRecord, updateHistoryRecord } from '../lib/db';
 import { v4 as uuidv4 } from 'uuid';
@@ -24,10 +26,11 @@ export function Receive() {
   const [remoteSdp, setRemoteSdp] = useState('');
   const [manualKey, setManualKey] = useState('');
   const [isGatheringIce, setIsGatheringIce] = useState(false);
-  const [pin, setPin] = useState(['', '', '', '', '', '']);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [showQr, setShowQr] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [pin, setPin] = useState(['', '', '', '']);
   const pinRefs = [
-    useRef<HTMLInputElement>(null),
-    useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
     useRef<HTMLInputElement>(null),
@@ -173,6 +176,16 @@ export function Receive() {
   };
 
   useEffect(() => {
+    const handleOnlineStatus = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', handleOnlineStatus);
+    window.addEventListener('offline', handleOnlineStatus);
+    return () => {
+      window.removeEventListener('online', handleOnlineStatus);
+      window.removeEventListener('offline', handleOnlineStatus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!roomId) {
       setStatus('scanning');
       return;
@@ -180,7 +193,7 @@ export function Receive() {
 
     const initConnection = async () => {
       let key = location.hash.replace('#', '');
-      if (!key && roomId.length === 6) {
+      if (!key && roomId.length === 4) {
         key = await deriveKeyFromPin(roomId);
       }
       setEncryptionKey(key);
@@ -244,6 +257,25 @@ export function Receive() {
     };
   }, [roomId, location.hash]);
 
+  const startScanner = () => {
+    setShowScanner(true);
+    setTimeout(() => {
+      const scanner = new Html5QrcodeScanner(
+        "qr-reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        /* verbose= */ false
+      );
+      scanner.render((decodedText) => {
+        setRemoteSdp(decodedText);
+        scanner.clear();
+        setShowScanner(false);
+        toast.success("Offer string scanned!");
+      }, (error) => {
+        // console.warn(error);
+      });
+    }, 100);
+  };
+
   const handleManualConnect = async () => {
     if (!remoteSdp) {
       toast.error("Please paste the connection string from the sender");
@@ -253,7 +285,7 @@ export function Receive() {
     // If we haven't initialized the peer yet (because we are in 'scanning' state)
     if (!peerRef.current) {
       const dummyRoomId = "manual-" + Date.now();
-      const peer = new PeerConnection(dummyRoomId, false);
+      const peer = new PeerConnection(dummyRoomId, false, true);
       peerRef.current = peer;
       
       peer.onError = (msg) => toast.error(msg);
@@ -297,7 +329,7 @@ export function Receive() {
     setPin(newPin);
 
     // Auto-advance to next input
-    if (value && index < 5) {
+    if (value && index < 3) {
       pinRefs[index + 1].current?.focus();
     }
   };
@@ -313,10 +345,10 @@ export function Receive() {
 
   const handlePinSubmit = () => {
     const fullPin = pin.join('');
-    if (fullPin.length === 6) {
+    if (fullPin.length === 4) {
       navigate(`/receive/${fullPin}`);
     } else {
-      toast.error('Please enter a 6-digit code.');
+      toast.error('Please enter a 4-digit code.');
     }
   };
 
@@ -392,7 +424,7 @@ export function Receive() {
           <div className="flex flex-col items-center justify-center space-y-8">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Enter Connection Code</h2>
-              <p className="text-gray-500 dark:text-gray-400">Enter the 6-digit code displayed on the sender's screen</p>
+              <p className="text-gray-500 dark:text-gray-400">Enter the 4-digit code displayed on the sender's screen</p>
             </div>
 
             <div className="flex justify-center mb-2">
@@ -414,7 +446,13 @@ export function Receive() {
             
             {!isManualMode ? (
               <div className="w-full max-w-md space-y-6">
-                <div className="flex justify-center space-x-2 sm:space-x-3">
+                {!isOnline && (
+                  <div className="mb-4 p-2 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-[10px] rounded-lg border border-amber-200 dark:border-amber-800/30 flex items-center space-x-2">
+                    <AlertCircle className="w-3 h-3" />
+                    <span>You are offline. Switch to "Offline (Manual)" mode.</span>
+                  </div>
+                )}
+                <div className="flex justify-center space-x-1.5 sm:space-x-3">
                   {pin.map((digit, index) => (
                     <input
                       key={index}
@@ -426,14 +464,14 @@ export function Receive() {
                       value={digit}
                       onChange={(e) => handlePinChange(index, e.target.value)}
                       onKeyDown={(e) => handlePinKeyDown(index, e)}
-                      className="w-10 h-14 sm:w-14 sm:h-20 text-center text-2xl sm:text-3xl font-bold bg-gray-50 dark:bg-gray-900/50 border-2 border-gray-200 dark:border-gray-700 rounded-xl sm:rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white"
+                      className="w-9 h-12 sm:w-14 sm:h-20 text-center text-xl sm:text-3xl font-bold bg-gray-50 dark:bg-gray-900/50 border-2 border-gray-200 dark:border-gray-700 rounded-lg sm:rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all text-gray-900 dark:text-white"
                     />
                   ))}
                 </div>
                 <button
                   onClick={handlePinSubmit}
-                  disabled={pin.join('').length !== 6}
-                  className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 text-lg"
+                  disabled={pin.join('').length !== 4}
+                  className="w-full py-3 sm:py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-500/20 text-base sm:text-lg"
                 >
                   Connect
                 </button>
@@ -455,12 +493,32 @@ export function Receive() {
                   
                   <div>
                     <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 1: Paste Sender's String</label>
-                    <textarea
-                      value={remoteSdp}
-                      onChange={(e) => setRemoteSdp(e.target.value)}
-                      placeholder="Paste the connection string from the sender here..."
-                      className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    />
+                    <div className="relative">
+                      <textarea
+                        value={remoteSdp}
+                        onChange={(e) => setRemoteSdp(e.target.value)}
+                        placeholder="Paste the connection string from the sender here..."
+                        className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none break-all"
+                      />
+                      <button
+                        onClick={startScanner}
+                        className="absolute bottom-2 right-2 p-2 bg-blue-600 text-white rounded-lg shadow-lg hover:bg-blue-700 transition-all"
+                        title="Scan QR Code"
+                      >
+                        <Scan className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {showScanner && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl w-full max-w-md">
+                          <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-white">Scan Offer QR</h3>
+                            <button onClick={() => setShowScanner(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+                          </div>
+                          <div id="qr-reader" className="overflow-hidden rounded-xl"></div>
+                        </div>
+                      </div>
+                    )}
                     <button
                       onClick={handleManualConnect}
                       disabled={!remoteSdp}
@@ -477,7 +535,7 @@ export function Receive() {
                         <textarea
                           readOnly
                           value={localSdp}
-                          className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none"
+                          className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none break-all"
                         />
                         <button
                           onClick={() => {
@@ -488,6 +546,19 @@ export function Receive() {
                         >
                           Copy Answer String
                         </button>
+                        <button
+                          onClick={() => setShowQr(!showQr)}
+                          className="w-full py-2 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-2"
+                        >
+                          <QrCode className="w-4 h-4" />
+                          <span>{showQr ? 'Hide QR Code' : 'Show QR Code'}</span>
+                        </button>
+                        {showQr && (
+                          <div className="flex flex-col items-center p-4 bg-white rounded-xl shadow-inner border border-gray-100">
+                            <QRCodeSVG value={localSdp} size={200} level="L" includeMargin={true} />
+                            <p className="text-[10px] text-gray-500 mt-2 text-center">Sender should scan this QR code</p>
+                          </div>
+                        )}
                         <p className="text-[10px] text-gray-500 dark:text-gray-400 text-center italic">Give this answer string back to the sender to complete the connection.</p>
                       </div>
                     </div>

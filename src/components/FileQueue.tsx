@@ -177,18 +177,18 @@ export function FileQueue({ files, onCancel, onRetry, onPause, onResume }: FileQ
                   
                   <Thumbnail file={file.file} url={file.url} type={file.type} name={file.name} />
 
-                  <div className="flex flex-col overflow-hidden">
+                  <div className="flex flex-col overflow-hidden min-w-0">
                     <span className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate" title={file.name}>
                       {file.name}
                     </span>
-                    <span className="text-xs text-gray-500 flex items-center space-x-2">
-                      <span>{(file.size / (1024 * 1024)).toFixed(2)} MB</span>
+                    <span className="text-[10px] sm:text-xs text-gray-500 flex flex-wrap items-center gap-x-2">
+                      <span className="whitespace-nowrap">{(file.size / (1024 * 1024)).toFixed(2)} MB</span>
                       {file.status === 'transferring' && (
                         <>
-                          <span>•</span>
-                          <span>{formatSpeed(file.speed)}</span>
-                          <span>•</span>
-                          <span>{formatTime(remainingSeconds)}</span>
+                          <span className="hidden sm:inline">•</span>
+                          <span className="whitespace-nowrap">{formatSpeed(file.speed)}</span>
+                          <span className="hidden sm:inline">•</span>
+                          <span className="whitespace-nowrap">{formatTime(remainingSeconds)}</span>
                         </>
                       )}
                     </span>

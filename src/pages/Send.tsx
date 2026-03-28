@@ -4,8 +4,10 @@ import { FileDrop } from '../components/FileDrop';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
 import { PeerConnection } from '../webrtc/peer';
 import { FileSender } from '../webrtc/fileSender';
-import { AlertCircle, RefreshCw, Lock } from 'lucide-react';
+import { AlertCircle, RefreshCw, Lock, QrCode, Scan } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { QRCodeSVG } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 import { generateEncryptionKey, decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
 import { addHistoryRecord, updateHistoryRecord } from '../lib/db';
@@ -22,6 +24,9 @@ export function Send() {
   const [remoteSdp, setRemoteSdp] = useState('');
   const [manualKey, setManualKey] = useState('');
   const [isGatheringIce, setIsGatheringIce] = useState(false);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [showQr, setShowQr] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   
   const peerRef = useRef<PeerConnection | null>(null);
   const sendersRef = useRef<Map<number, FileSender>>(new Map());
@@ -102,8 +107,18 @@ export function Send() {
   };
 
   useEffect(() => {
+    const handleOnlineStatus = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', handleOnlineStatus);
+    window.addEventListener('offline', handleOnlineStatus);
+    return () => {
+      window.removeEventListener('online', handleOnlineStatus);
+      window.removeEventListener('offline', handleOnlineStatus);
+    };
+  }, []);
+
+  useEffect(() => {
     const initRoom = async () => {
-      const newRoomId = Math.floor(100000 + Math.random() * 899999).toString();
+      const newRoomId = Math.floor(1000 + Math.random() * 8999).toString();
       const newKey = await deriveKeyFromPin(newRoomId);
       setRoomId(newRoomId);
       setEncryptionKey(newKey);
@@ -183,6 +198,25 @@ export function Send() {
     peerRef.current?.createManualOffer();
   };
 
+  const startScanner = () => {
+    setShowScanner(true);
+    setTimeout(() => {
+      const scanner = new Html5QrcodeScanner(
+        "qr-reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        /* verbose= */ false
+      );
+      scanner.render((decodedText) => {
+        setRemoteSdp(decodedText);
+        scanner.clear();
+        setShowScanner(false);
+        toast.success("Answer string scanned!");
+      }, (error) => {
+        // console.warn(error);
+      });
+    }, 100);
+  };
+
   const handleFilesSelect = (selectedFiles: File[]) => {
     peerRef.current?.resetActivity();
     const newItems: FileQueueItem[] = selectedFiles.map(f => ({
@@ -215,7 +249,8 @@ export function Send() {
       timestamp: Date.now(),
     });
 
-    const sender = new FileSender(channel, fileToSend, fileId, encryptionKey);
+    const activeKey = isManualMode ? (manualKey || undefined) : encryptionKey;
+    const sender = new FileSender(channel, fileToSend, fileId, activeKey);
     sendersRef.current.set(fileId, sender);
 
     sender.onProgress = (p, s) => {
@@ -348,13 +383,13 @@ export function Send() {
               <div className="inline-flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
                 <button
                   onClick={() => setIsManualMode(false)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${!isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                  className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${!isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
                 >
                   Online (Code)
                 </button>
                 <button
                   onClick={() => setIsManualMode(true)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                  className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
                 >
                   Offline (Manual)
                 </button>
@@ -363,9 +398,15 @@ export function Send() {
 
             {!isManualMode ? (
               roomId ? (
-                <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto">
+                <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 sm:p-8 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto">
+                  {!isOnline && (
+                    <div className="mb-4 p-2 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-[10px] rounded-lg border border-amber-200 dark:border-amber-800/30 flex items-center space-x-2">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>You are offline. Switch to "Offline (Manual)" mode.</span>
+                    </div>
+                  )}
                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Enter this 4-digit code on the receiving device:</p>
-                  <div className="text-6xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.2em] py-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+                  <div className="text-4xl sm:text-6xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.1em] sm:tracking-[0.2em] py-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl overflow-hidden break-all">
                     {roomId}
                   </div>
                 </div>
@@ -394,14 +435,14 @@ export function Send() {
                       disabled={isGatheringIce}
                       className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20"
                     >
-                      {isGatheringIce ? 'Gathering Connection Data...' : 'Generate Connection String'}
+                      {isGatheringIce ? 'Gathering...' : 'Generate String'}
                     </button>
                   ) : (
                     <div className="space-y-2">
                       <textarea
                         readOnly
                         value={localSdp}
-                        className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none"
+                        className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none break-all"
                       />
                       <button
                         onClick={() => {
@@ -412,18 +453,51 @@ export function Send() {
                       >
                         Copy String
                       </button>
+                      <button
+                        onClick={() => setShowQr(!showQr)}
+                        className="w-full py-2 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-2"
+                      >
+                        <QrCode className="w-4 h-4" />
+                        <span>{showQr ? 'Hide QR Code' : 'Show QR Code'}</span>
+                      </button>
+                      {showQr && (
+                        <div className="flex flex-col items-center p-4 bg-white rounded-xl shadow-inner border border-gray-100">
+                          <QRCodeSVG value={localSdp} size={200} level="L" includeMargin={true} />
+                          <p className="text-[10px] text-gray-500 mt-2 text-center">Receiver should scan this QR code</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
                 <div className="text-left">
                   <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 2: Paste Receiver's Answer</label>
-                  <textarea
-                    value={remoteSdp}
-                    onChange={(e) => setRemoteSdp(e.target.value)}
-                    placeholder="Paste the answer string from the receiver here..."
-                    className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  />
+                  <div className="relative">
+                    <textarea
+                      value={remoteSdp}
+                      onChange={(e) => setRemoteSdp(e.target.value)}
+                      placeholder="Paste the answer string from the receiver here..."
+                      className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none break-all"
+                    />
+                    <button
+                      onClick={startScanner}
+                      className="absolute bottom-2 right-2 p-2 bg-blue-600 text-white rounded-lg shadow-lg hover:bg-blue-700 transition-all"
+                      title="Scan QR Code"
+                    >
+                      <Scan className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {showScanner && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                      <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl w-full max-w-md">
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-lg font-bold text-gray-900 dark:text-white">Scan Answer QR</h3>
+                          <button onClick={() => setShowScanner(false)} className="text-gray-500 hover:text-gray-700">✕</button>
+                        </div>
+                        <div id="qr-reader" className="overflow-hidden rounded-xl"></div>
+                      </div>
+                    </div>
+                  )}
                   <button
                     onClick={handleManualConnect}
                     disabled={!remoteSdp || peerConnected}

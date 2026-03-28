@@ -38,7 +38,7 @@ export function FileDrop({ onFilesSelect, disabled }: FileDropProps) {
 
   return (
     <div
-      className={`border-2 border-dashed rounded-2xl p-12 text-center transition-colors
+      className={`border-2 border-dashed rounded-2xl p-6 sm:p-12 text-center transition-colors
         ${disabled ? 'opacity-50 cursor-not-allowed bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-800' : 'cursor-pointer'}
         ${isDragging && !disabled ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}
         ${!disabled && !isDragging ? 'border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50' : ''}`}

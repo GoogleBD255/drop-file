@@ -10,6 +10,7 @@ export class PeerConnection {
   private isClosing = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
+  private isManualMode = false;
   public onDataChannel?: (channel: RTCDataChannel) => void;
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
   public onPeerLeft?: () => void;
@@ -17,20 +18,25 @@ export class PeerConnection {
   public onDisconnect?: () => void;
   public onError?: (message: string) => void;
   public onManualSignal?: (signal: string) => void;
+  public dataChannel: RTCDataChannel | null = null;
 
   private pingInterval?: number;
   private wsPingInterval?: number;
   private inactivityTimeout?: number;
   private readonly INACTIVITY_LIMIT = 10 * 60 * 1000; // 10 minutes
 
-  constructor(roomId: string, isInitiator: boolean) {
+  constructor(roomId: string, isInitiator: boolean, isManualMode = false) {
     this.roomId = roomId;
     this.isInitiator = isInitiator;
+    this.isManualMode = isManualMode;
     
-    this.ws = new WebSocket(getSocketUrl());
+    if (!isManualMode && typeof navigator !== 'undefined' && navigator.onLine) {
+      this.ws = new WebSocket(getSocketUrl());
+    }
     
-    this.pc = new RTCPeerConnection({
-      iceServers: [
+    const iceServers = [];
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      iceServers.push(
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
         { urls: "stun:stun2.l.google.com:19302" },
@@ -38,10 +44,6 @@ export class PeerConnection {
         { urls: "stun:stun4.l.google.com:19302" },
         { urls: "stun:stun.services.mozilla.com" },
         { urls: "stun:stun.cloudflare.com:3478" },
-        { urls: "stun:stun.voipstunt.com" },
-        { urls: "stun:stun.ekiga.net" },
-        { urls: "stun:stun.ideasip.com" },
-        { urls: "stun:stun.schlund.de" },
         {
           urls: "turn:openrelay.metered.ca:80",
           username: "openrelayproject",
@@ -56,18 +58,12 @@ export class PeerConnection {
           urls: "turn:openrelay.metered.ca:443?transport=tcp",
           username: "openrelayproject",
           credential: "openrelayproject"
-        },
-        {
-          urls: "turn:relay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        },
-        {
-          urls: "turn:relay.metered.ca:443",
-          username: "openrelayproject",
-          credential: "openrelayproject"
         }
-      ],
+      );
+    }
+
+    this.pc = new RTCPeerConnection({
+      iceServers,
       iceCandidatePoolSize: 10
     });
 
@@ -164,7 +160,7 @@ export class PeerConnection {
         this.sendSignal({ candidate: event.candidate });
       } else {
         // ICE gathering complete - useful for manual signaling
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        if (this.isManualMode || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
           if (this.pc.localDescription) {
             this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
           }
@@ -249,20 +245,31 @@ export class PeerConnection {
   }
 
   public async createManualOffer() {
+    this.isManualMode = true;
     try {
       const offer = await this.pc.createOffer({ iceRestart: true });
       await this.pc.setLocalDescription(offer);
-      // We wait for ICE gathering to complete before sending the signal in manual mode
-      // or we can send it immediately if we don't care about trickle ICE
+      
+      // If gathering is already complete (unlikely but possible)
       if (this.pc.iceGatheringState === 'complete') {
         this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
       }
+      
+      // Set a timeout to trigger manual signal even if gathering isn't "complete"
+      // but we have some candidates. This helps if STUN servers are unreachable.
+      setTimeout(() => {
+        if (this.pc.iceGatheringState !== 'complete' && this.pc.localDescription) {
+          console.log("ICE gathering timeout, sending partial SDP");
+          this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
+        }
+      }, 5000);
     } catch (err) {
       console.error("Error creating manual offer", err);
     }
   }
 
   public async setManualSignal(signalStr: string) {
+    this.isManualMode = true;
     try {
       const signal = JSON.parse(signalStr);
       await this.handleSignal(signal);
@@ -291,7 +298,7 @@ export class PeerConnection {
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
           
-          if (this.ws.readyState === WebSocket.OPEN) {
+          if (!this.isManualMode && this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.sendSignal({ sdp: this.pc.localDescription });
           } else {
             // In manual mode, we wait for ICE gathering to complete
@@ -299,6 +306,14 @@ export class PeerConnection {
             if (this.pc.iceGatheringState === 'complete') {
               this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
             }
+            
+            // Also set a timeout for the answer
+            setTimeout(() => {
+              if (this.pc.iceGatheringState !== 'complete' && this.pc.localDescription) {
+                console.log("ICE gathering timeout for answer, sending partial SDP");
+                this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
+              }
+            }, 5000);
           }
         }
         

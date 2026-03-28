@@ -1,5 +1,5 @@
 {
   "name": "Fast Share",
   "description": "Ultra-fast P2P file transfer web application using WebRTC",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"]
 }
