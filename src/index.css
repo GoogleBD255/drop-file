@@ -1,9 +1,37 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  :root {
+    --bg: #020617;
+    --ink: #f8fafc;
+    --line: rgba(248, 250, 252, 0.08);
+    --card-bg: rgba(15, 23, 42, 0.6);
+    --card-border: rgba(255, 255, 255, 0.05);
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+  }
+}
+
 @layer utilities {
   @keyframes scan {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(100%); }
+  }
+
+  .glass {
+    background: var(--card-bg);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--card-border);
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -17,4 +45,23 @@
 
 #reader__scan_region video {
   border-radius: 1.5rem;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(248, 250, 252, 0.1);
 }

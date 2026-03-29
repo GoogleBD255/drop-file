@@ -68,7 +68,9 @@ export class PeerConnection {
     });
 
     this.setupPeerConnection();
-    this.setupWebSocket();
+    if (!this.isManualMode) {
+      this.setupWebSocket();
+    }
     this.resetInactivityTimeout();
   }
 
@@ -88,7 +90,12 @@ export class PeerConnection {
   }
 
   private setupWebSocket() {
-    if (this.isClosing) return;
+    if (this.isClosing || this.isManualMode) return;
+
+    // Close existing if any
+    if (this.ws) {
+      try { this.ws.close(); } catch(e) {}
+    }
 
     this.ws = new WebSocket(getSocketUrl());
     
@@ -262,7 +269,7 @@ export class PeerConnection {
           console.log("ICE gathering timeout, sending partial SDP");
           this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
         }
-      }, 5000);
+      }, 10000);
     } catch (err) {
       console.error("Error creating manual offer", err);
     }
@@ -270,8 +277,17 @@ export class PeerConnection {
 
   public async setManualSignal(signalStr: string) {
     this.isManualMode = true;
+    
+    // Stop WebSocket if it's running
+    if (this.ws) {
+      try { this.ws.close(); } catch(e) {}
+      this.ws = null;
+    }
+    if (this.wsPingInterval) window.clearInterval(this.wsPingInterval);
+
     try {
       const signal = JSON.parse(signalStr);
+      console.log("Processing manual signal:", signal.sdp?.type);
       await this.handleSignal(signal);
     } catch (err) {
       console.error("Error setting manual signal", err);
@@ -313,7 +329,7 @@ export class PeerConnection {
                 console.log("ICE gathering timeout for answer, sending partial SDP");
                 this.onManualSignal?.(JSON.stringify({ sdp: this.pc.localDescription }));
               }
-            }, 5000);
+            }, 10000);
           }
         }
         

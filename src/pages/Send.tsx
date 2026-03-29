@@ -4,13 +4,15 @@ import { FileDrop } from '../components/FileDrop';
 import { FileQueue, FileQueueItem } from '../components/FileQueue';
 import { PeerConnection } from '../webrtc/peer';
 import { FileSender } from '../webrtc/fileSender';
-import { AlertCircle, RefreshCw, Lock, QrCode, Scan } from 'lucide-react';
+import { AlertCircle, RefreshCw, Lock, QrCode, Scan, ShieldCheck, Wifi, WifiOff, Download, Send as SendIcon } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
 import { generateEncryptionKey, decryptText, encryptText, deriveKeyFromPin } from '../lib/crypto';
 import { addHistoryRecord, updateHistoryRecord } from '../lib/db';
+
+import { motion, AnimatePresence } from 'motion/react';
 
 export function Send() {
   const [roomId, setRoomId] = useState<string>('');
@@ -176,8 +178,9 @@ export function Send() {
     };
   }, []);
 
-  const handleManualConnect = async () => {
-    if (!remoteSdp) {
+  const handleManualConnect = async (sdpOverride?: string) => {
+    const sdpToUse = sdpOverride || remoteSdp;
+    if (!sdpToUse) {
       toast.error("Please paste the answer from the receiver");
       return;
     }
@@ -188,7 +191,8 @@ export function Send() {
     }
 
     try {
-      await peerRef.current?.setManualSignal(remoteSdp);
+      await peerRef.current?.setManualSignal(sdpToUse);
+      setConnectionDetail('Connecting to receiver...');
     } catch (e) {
       toast.error("Invalid answer string");
     }
@@ -212,6 +216,8 @@ export function Send() {
         scanner.clear();
         setShowScanner(false);
         toast.success("Answer string scanned!");
+        // Auto-trigger connection
+        handleManualConnect(decodedText);
       }, (error) => {
         // console.warn(error);
       });
@@ -367,203 +373,315 @@ export function Send() {
   }, [peerConnected]);
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <div className="text-center mb-10">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Send Files</h1>
-        <p className="text-gray-500 dark:text-gray-400 mb-4">Share files securely via peer-to-peer connection</p>
-        <div className="inline-flex items-center space-x-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 px-3 py-1 rounded-full text-xs font-medium border border-green-200 dark:border-green-800/30">
-          <Lock className="w-3.5 h-3.5" />
-          <span>End-to-End Encrypted</span>
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="max-w-6xl mx-auto p-4 sm:p-6"
+    >
+      <div className="text-center mb-10 sm:mb-14">
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="inline-block p-4 bg-blue-100 dark:bg-blue-900/30 rounded-3xl mb-6 shadow-xl shadow-blue-500/10"
+        >
+          <SendIcon className="w-10 h-10 text-blue-600 dark:text-blue-400" />
+        </motion.div>
+        <h1 className="text-4xl sm:text-6xl font-black text-gray-900 dark:text-white mb-6 tracking-tighter">Send Files</h1>
+        <p className="text-gray-600 dark:text-gray-400 max-w-lg mx-auto leading-relaxed font-medium text-lg">Securely share files directly with another device. Your data never touches any server.</p>
+        
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <div className="inline-flex items-center space-x-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-full text-xs font-semibold border border-green-200 dark:border-green-800/30">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>End-to-End Encrypted</span>
+          </div>
+          <div className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${isOnline ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/30' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/30'}`}>
+            {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+            <span>{isOnline ? 'Online Mode Available' : 'Offline Mode Only'}</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-8 items-start">
-        <div className="flex flex-col items-center space-y-6 md:sticky md:top-24">
-          <div className="text-center w-full">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">1. Share Connection Code</h2>
-            
-            <div className="flex justify-center mb-6">
-              <div className="inline-flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        <div className="lg:col-span-5 space-y-8 lg:sticky lg:top-24">
+          <motion.div 
+            layout
+            className="glass rounded-3xl shadow-xl border border-white/20 dark:border-gray-700/30 overflow-hidden"
+          >
+            <div className="p-6 sm:p-8">
+              <h2 className="text-2xl font-black text-gray-900 dark:text-white mb-8 flex items-center space-x-4">
+                <span className="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center text-sm font-black shadow-xl shadow-blue-500/30">1</span>
+                <span>Connection Setup</span>
+              </h2>
+              
+              <div className="inline-flex p-1.5 bg-gray-100/50 dark:bg-gray-900/50 rounded-[1.5rem] border border-gray-200/50 dark:border-gray-700/50 w-full mb-10">
                 <button
                   onClick={() => setIsManualMode(false)}
-                  className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${!isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                  className={`flex-1 py-3.5 rounded-2xl text-sm font-black transition-all duration-300 ${!isManualMode ? 'bg-white dark:bg-gray-700 shadow-xl text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
                 >
-                  Online (Code)
+                  Online Mode
                 </button>
                 <button
                   onClick={() => setIsManualMode(true)}
-                  className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${isManualMode ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                  className={`flex-1 py-3.5 rounded-2xl text-sm font-black transition-all duration-300 ${isManualMode ? 'bg-white dark:bg-gray-700 shadow-xl text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'}`}
                 >
-                  Offline (Manual)
+                  Offline Mode
                 </button>
               </div>
-            </div>
 
-            {!isManualMode ? (
-              roomId ? (
-                <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 sm:p-8 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto">
-                  {!isOnline && (
-                    <div className="mb-4 p-2 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-[10px] rounded-lg border border-amber-200 dark:border-amber-800/30 flex items-center space-x-2">
-                      <AlertCircle className="w-3 h-3" />
-                      <span>You are offline. Switch to "Offline (Manual)" mode.</span>
+              <AnimatePresence mode="wait">
+                {!isManualMode ? (
+                  <motion.div
+                    key="online"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="space-y-6"
+                  >
+                    {roomId ? (
+                      <div className="text-center">
+                        {!isOnline && (
+                          <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-xs rounded-2xl border border-amber-200 dark:border-amber-800/30 flex items-center space-x-3">
+                            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                            <span>You are currently offline. Please switch to "Offline Mode" or check your internet connection.</span>
+                          </div>
+                        )}
+                        <p className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-widest mb-4">Share this code with receiver</p>
+                        <div className="text-5xl sm:text-7xl font-mono font-black text-blue-600 dark:text-blue-400 tracking-[0.2em] py-10 bg-blue-50/50 dark:bg-blue-900/10 rounded-3xl border border-blue-100 dark:border-blue-900/30 shadow-inner">
+                          {roomId}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-full h-48 bg-gray-100/50 dark:bg-gray-800/50 animate-pulse rounded-3xl"></div>
+                    )}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="manual"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="space-y-6"
+                  >
+                    <div className="bg-gray-50/50 dark:bg-gray-900/30 p-6 rounded-2xl border border-gray-200 dark:border-gray-700">
+                      <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-widest mb-3">Optional: Encryption Key</label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                          type="text"
+                          value={manualKey}
+                          onChange={(e) => setManualKey(e.target.value)}
+                          placeholder="Secret key for extra security"
+                          className="w-full pl-10 pr-4 py-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm"
+                        />
+                      </div>
                     </div>
-                  )}
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Enter this 4-digit code on the receiving device:</p>
-                  <div className="text-4xl sm:text-6xl font-mono font-bold text-blue-600 dark:text-blue-400 tracking-[0.1em] sm:tracking-[0.2em] py-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl overflow-hidden break-all">
-                    {roomId}
-                  </div>
-                </div>
-              ) : (
-                <div className="w-full max-w-sm h-[200px] bg-gray-100 dark:bg-gray-800 animate-pulse rounded-2xl mx-auto"></div>
-              )
-            ) : (
-              <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-gray-700 w-full max-w-sm mx-auto space-y-4">
-                <div className="text-left">
-                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Optional: Encryption Key</label>
-                  <input
-                    type="text"
-                    value={manualKey}
-                    onChange={(e) => setManualKey(e.target.value)}
-                    placeholder="Enter a secret key (optional)"
-                    className="w-full p-2 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                  <p className="text-[10px] text-gray-500 mt-1 italic">Use the same key on both devices for encryption.</p>
-                </div>
 
-                <div className="text-left">
-                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 1: Your Connection String</label>
-                  {!localSdp ? (
-                    <button
-                      onClick={startManualGathering}
-                      disabled={isGatheringIce}
-                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20"
-                    >
-                      {isGatheringIce ? 'Gathering...' : 'Generate String'}
-                    </button>
-                  ) : (
-                    <div className="space-y-2">
-                      <textarea
-                        readOnly
-                        value={localSdp}
-                        className="w-full h-24 p-2 text-[10px] font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none break-all"
-                      />
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(localSdp);
-                          toast.success('Copied to clipboard');
-                        }}
-                        className="w-full py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-xs font-bold transition-all"
-                      >
-                        Copy String
-                      </button>
-                      <button
-                        onClick={() => setShowQr(!showQr)}
-                        className="w-full py-2 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-2"
-                      >
-                        <QrCode className="w-4 h-4" />
-                        <span>{showQr ? 'Hide QR Code' : 'Show QR Code'}</span>
-                      </button>
-                      {showQr && (
-                        <div className="flex flex-col items-center p-4 bg-white rounded-xl shadow-inner border border-gray-100">
-                          <QRCodeSVG value={localSdp} size={200} level="L" includeMargin={true} />
-                          <p className="text-[10px] text-gray-500 mt-2 text-center">Receiver should scan this QR code</p>
+                    <div className="space-y-4">
+                      <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-widest">Step 1: Your Connection String</label>
+                      {!localSdp ? (
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={startManualGathering}
+                          disabled={isGatheringIce}
+                          className="w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 dark:disabled:bg-gray-800 text-white rounded-2xl text-sm font-bold transition-all shadow-xl shadow-blue-500/20 flex items-center justify-center space-x-2"
+                        >
+                          {isGatheringIce ? <RefreshCw className="w-4 h-4 animate-spin" /> : null}
+                          <span>{isGatheringIce ? 'Gathering ICE...' : 'Generate Connection String'}</span>
+                        </motion.button>
+                      ) : (
+                        <div className="space-y-4">
+                          <textarea
+                            readOnly
+                            value={localSdp}
+                            className="w-full h-32 p-4 text-[11px] font-mono bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-2xl focus:outline-none break-all resize-none shadow-inner"
+                          />
+                          <div className="grid grid-cols-2 gap-3">
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(localSdp);
+                                toast.success('Copied to clipboard');
+                              }}
+                              className="py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              <span>Copy String</span>
+                            </button>
+                            <button
+                              onClick={() => setShowQr(!showQr)}
+                              className="py-3 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2"
+                            >
+                              <QrCode className="w-4 h-4" />
+                              <span>{showQr ? 'Hide QR' : 'Show QR'}</span>
+                            </button>
+                          </div>
+                          <AnimatePresence>
+                            {showQr && (
+                              <motion.div 
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="flex flex-col items-center p-6 bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden"
+                              >
+                                <QRCodeSVG value={localSdp} size={200} level="L" includeMargin={true} />
+                                <p className="text-[10px] text-gray-400 mt-4 font-medium">Ask receiver to scan this code</p>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
 
-                <div className="text-left">
-                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Step 2: Paste Receiver's Answer</label>
-                  <div className="relative">
-                    <textarea
-                      value={remoteSdp}
-                      onChange={(e) => setRemoteSdp(e.target.value)}
-                      placeholder="Paste the answer string from the receiver here..."
-                      className="w-full h-24 p-2 text-[10px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none break-all"
-                    />
-                    <button
-                      onClick={startScanner}
-                      className="absolute bottom-2 right-2 p-2 bg-blue-600 text-white rounded-lg shadow-lg hover:bg-blue-700 transition-all"
-                      title="Scan QR Code"
-                    >
-                      <Scan className="w-4 h-4" />
-                    </button>
-                  </div>
-                  {showScanner && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-                      <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl w-full max-w-md">
-                        <div className="flex justify-between items-center mb-4">
-                          <h3 className="text-lg font-bold text-gray-900 dark:text-white">Scan Answer QR</h3>
-                          <button onClick={() => setShowScanner(false)} className="text-gray-500 hover:text-gray-700">✕</button>
-                        </div>
-                        <div id="qr-reader" className="overflow-hidden rounded-xl"></div>
+                    <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                      <label className="block text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-widest">Step 2: Receiver's Answer</label>
+                      <div className="relative group">
+                        <textarea
+                          value={remoteSdp}
+                          onChange={(e) => setRemoteSdp(e.target.value)}
+                          placeholder="Paste the answer string here..."
+                          className="w-full h-32 p-4 text-[11px] font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all resize-none shadow-inner"
+                        />
+                        <button
+                          onClick={startScanner}
+                          className="absolute bottom-3 right-3 p-3 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition-all hover:scale-110 active:scale-95"
+                          title="Scan QR Code"
+                        >
+                          <Scan className="w-5 h-5" />
+                        </button>
                       </div>
+                      <motion.button
+                        whileHover={{ scale: 1.01 }}
+                        whileTap={{ scale: 0.99 }}
+                        onClick={() => handleManualConnect()}
+                        disabled={!remoteSdp || peerConnected}
+                        className="w-full py-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-2xl text-sm font-bold transition-all shadow-xl shadow-green-500/20"
+                      >
+                        Connect Manually
+                      </motion.button>
                     </div>
-                  )}
-                  <button
-                    onClick={handleManualConnect}
-                    disabled={!remoteSdp || peerConnected}
-                    className="w-full mt-2 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20"
-                  >
-                    Connect Manually
-                  </button>
-                </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+          
+          <div className="flex flex-col items-center space-y-4 w-full px-4">
+            <div className="flex items-center space-x-3 bg-white/50 dark:bg-gray-800/50 px-5 py-2.5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
+              <div className="relative">
+                <div className={`w-3 h-3 rounded-full ${peerConnected ? 'bg-green-500' : 'bg-amber-500'}`}></div>
+                {peerConnected ? (
+                  <div className="absolute inset-0 w-3 h-3 rounded-full bg-green-500 animate-ping"></div>
+                ) : (
+                  <div className="absolute inset-0 w-3 h-3 rounded-full bg-amber-500 animate-pulse"></div>
+                )}
               </div>
+              <span className="text-sm font-bold text-gray-700 dark:text-gray-200">
+                {peerConnected ? 'Receiver Connected' : connectionDetail}
+              </span>
+            </div>
+            
+            {peerConnected && (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleManualDisconnect}
+                className="px-6 py-2 bg-red-50 hover:bg-red-100 dark:bg-red-900/10 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl text-xs font-bold transition-all border border-red-100 dark:border-red-900/30"
+              >
+                Disconnect Session
+              </motion.button>
             )}
           </div>
-          
-            <div className="flex flex-col items-center space-y-4">
-              <div className="flex items-center space-x-2 text-sm">
-                <div className={`w-3 h-3 rounded-full ${peerConnected ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></div>
-                <span className="text-gray-600 dark:text-gray-300">
-                  {peerConnected ? 'Receiver Connected' : connectionDetail}
-                </span>
-              </div>
-              
-              {peerConnected && (
-                <button
-                  onClick={handleManualDisconnect}
-                  className="px-4 py-2 bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-xl text-sm font-semibold transition-colors"
-                >
-                  Disconnect
-                </button>
-              )}
-            </div>
-          
+
           {status === 'error' && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4 text-center w-full max-w-sm">
-              <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-              <h3 className="text-sm font-medium text-red-900 dark:text-red-100 mb-1">Connection Error</h3>
-              <p className="text-red-700 dark:text-red-300 text-xs mb-4">The peer connection was lost or failed.</p>
-              <button
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 rounded-3xl p-8 text-center w-full shadow-xl shadow-red-500/5"
+            >
+              <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+              <h3 className="text-xl font-bold text-red-900 dark:text-red-100 mb-2">Connection Error</h3>
+              <p className="text-red-700/70 dark:text-red-300/70 text-sm mb-8 leading-relaxed max-w-xs mx-auto">The peer connection was lost or failed. Please check your network and try again.</p>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 onClick={() => {
                   window.location.hash = '';
                   window.location.reload();
                 }}
-                className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-red-500/20 flex items-center space-x-2 mx-auto"
+                className="px-8 py-3.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-2xl text-sm font-bold transition-all shadow-xl shadow-gray-900/10 dark:shadow-white/10 flex items-center space-x-2 mx-auto"
               >
                 <RefreshCw className="w-4 h-4" />
-                <span>Try Again</span>
-              </button>
-            </div>
+                <span>Restart Connection</span>
+              </motion.button>
+            </motion.div>
           )}
         </div>
 
-        <div className="space-y-6">
-          <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4 text-center md:text-left">2. Select Files</h2>
-          
-          <FileDrop onFilesSelect={handleFilesSelect} disabled={!peerConnected} />
-          
-          <FileQueue 
-            files={files} 
-            onCancel={handleCancel} 
-            onRetry={handleRetry} 
-            onPause={handlePause} 
-            onResume={handleResume} 
-          />
+        <div className="lg:col-span-7 space-y-8">
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4 }}
+          >
+            <h2 className="text-2xl font-black text-gray-900 dark:text-white mb-8 flex items-center space-x-4">
+              <span className="w-10 h-10 bg-blue-600 text-white rounded-2xl flex items-center justify-center text-sm font-black shadow-xl shadow-blue-500/30">2</span>
+              <span>Select Files</span>
+            </h2>
+            
+            <div className="space-y-8">
+              <FileDrop onFilesSelect={handleFilesSelect} disabled={!peerConnected} />
+              
+              <AnimatePresence>
+                {files.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
+                    <FileQueue 
+                      files={files} 
+                      onCancel={handleCancel} 
+                      onRetry={handleRetry} 
+                      onPause={handlePause} 
+                      onResume={handleResume} 
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
         </div>
       </div>
-    </div>
+
+      <AnimatePresence>
+        {showScanner && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-gray-900 p-8 rounded-[2.5rem] w-full max-w-md shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white">Scan Answer QR</h3>
+                <button 
+                  onClick={() => setShowScanner(false)} 
+                  className="w-10 h-10 flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-full text-gray-600 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+              <div id="qr-reader" className="overflow-hidden rounded-3xl border-4 border-gray-100 dark:border-gray-800 shadow-inner"></div>
+              <p className="text-center text-xs text-gray-600 mt-6 font-medium">Point your camera at the receiver's QR code</p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

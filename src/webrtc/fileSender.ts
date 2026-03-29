@@ -5,7 +5,7 @@ export class FileSender {
   private file: File;
   public fileId: number;
   private encryptionKey?: string;
-  private chunkSize = 64 * 1024; // 64KB - More robust for WebRTC data channels
+  private chunkSize = 256 * 1024; // 256KB - Faster for modern WebRTC data channels
   private offset = 0;
   private isCancelled = false;
   private isPaused = false;
